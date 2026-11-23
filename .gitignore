@@ -1,9 +1,31 @@
+
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+build/
+
+# Server data
 server/data/
+
+# Environment variables and secrets
 .env
-.env.local
+.env.*
+!.env.example
+
+# Logs
 *.log
 npm-debug.log*
+
+# Private keys and certificates
+*.pem
+*.key
+
+# Testing and development
+coverage/
+.vite/
+
+# Operating system files
 .DS_Store
 Thumbs.db
