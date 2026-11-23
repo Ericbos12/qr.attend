@@ -4,6 +4,7 @@ import { FeedbackProvider } from './components/UiFeedback';
 import AppShell from './components/AppShell';
 import LoginView from './components/LoginView';
 import Dashboard from './components/Dashboard';
+import ReportsView from './components/ReportsView';
 import ProjectorView from './components/ProjectorView';
 import SessionDetail from './components/SessionDetail';
 import StudentCheckIn from './components/StudentCheckIn';
@@ -150,6 +151,8 @@ function AppContent() {
         }
       />
     );
+  } else if (path === '/reports') {
+    pageContent = <ReportsView classes={classes} />;
   } else {
     const viewMode = path === '/sessions' ? 'sessions' : 'courses';
     pageContent = (

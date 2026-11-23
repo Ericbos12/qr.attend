@@ -10,7 +10,7 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { api, isLocalhostOrigin } from '../api';
+import { api } from '../api';
 import { useFeedback } from './UiFeedback';
 
 export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
@@ -23,7 +23,6 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
   const [progressPct, setProgressPct] = useState(100);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [preferredOrigin, setPreferredOrigin] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [latestId, setLatestId] = useState('');
 
@@ -40,19 +39,13 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
     let active = true;
     async function init() {
       try {
-        const [sessData, netData] = await Promise.all([
-          api.getSession(sessionId),
-          isLocalhostOrigin() ? api.getNetworkInfo().catch(() => null) : Promise.resolve(null),
-        ]);
+        const sessData = await api.getSession(sessionId);
         if (!active) return;
         setSession(sessData.session);
         setRecords(sessData.records);
         setQrState(sessData.qr);
         if (sessData.qr?.serverTime) {
           serverOffsetRef.current = sessData.qr.serverTime - Date.now();
-        }
-        if (netData?.preferredOrigin) {
-          setPreferredOrigin(netData.preferredOrigin);
         }
       } catch (err) {
         if (active) setError(err.message);
@@ -77,6 +70,12 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
           setLatestId(record.id);
           return [record, ...prev];
         });
+      } catch {}
+    });
+    es.addEventListener('record_updated', (evt) => {
+      try {
+        const record = JSON.parse(evt.data);
+        setRecords((prev) => prev.map((r) => (r.id === record.id ? record : r)));
       } catch {}
     });
     es.addEventListener('record_removed', (evt) => {
@@ -139,11 +138,8 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
     return () => clearInterval(tick);
   }, [sessionId, session?.status, qrState?.expiresAt, qrState?.intervalSec]);
 
-  // Silently use LAN IP on localhost so phones on the same Wi-Fi can scan; use live domain when hosted.
-  const qrOrigin = isLocalhostOrigin() && preferredOrigin ? preferredOrigin : window.location.origin;
-
   const scanUrl = qrState
-    ? `${qrOrigin}/checkin?s=${encodeURIComponent(sessionId)}&t=${encodeURIComponent(qrState.token)}`
+    ? `${window.location.origin}/checkin?s=${encodeURIComponent(sessionId)}&t=${encodeURIComponent(qrState.token)}`
     : '';
 
   useEffect(() => {
@@ -245,6 +241,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
             </div>
             <div style={{ fontSize: '0.78rem', color: '#8b949e' }}>
               {session.className} {session.room ? `· ${session.room}` : ''}
+              {session.lateAfterMinutes ? ` · Late after ${session.lateAfterMinutes}m` : ''}
             </div>
           </div>
         </div>
@@ -431,8 +428,22 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
                     >
                       {rec.studentName}
                     </div>
-                    <div className="mono" style={{ fontSize: '0.76rem', color: '#8b949e' }}>
-                      {rec.studentId}
+                    <div className="mono" style={{ fontSize: '0.76rem', color: '#8b949e', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>{rec.studentId}</span>
+                      {rec.status === 'late' && (
+                        <span
+                          style={{
+                            fontSize: '0.66rem',
+                            fontWeight: 700,
+                            padding: '1px 5px',
+                            borderRadius: 4,
+                            background: 'rgba(245, 158, 11, 0.2)',
+                            color: '#fbbf24',
+                          }}
+                        >
+                          LATE
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="mono" style={{ fontSize: '0.74rem', color: '#6e7681', flexShrink: 0 }}>

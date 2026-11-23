@@ -22,7 +22,7 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
   const [error, setError] = useState('');
 
   const [showAdd, setShowAdd] = useState(false);
-  const [addForm, setAddForm] = useState({ studentId: '', studentName: '', note: '' });
+  const [addForm, setAddForm] = useState({ studentId: '', studentName: '', status: 'present', note: '' });
 
   async function load() {
     try {
@@ -52,6 +52,12 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
         setRecords((prev) => (prev.some((r) => r.id === rec.id) ? prev : [rec, ...prev]));
       } catch {}
     });
+    es.addEventListener('record_updated', (evt) => {
+      try {
+        const rec = JSON.parse(evt.data);
+        setRecords((prev) => prev.map((r) => (r.id === rec.id ? rec : r)));
+      } catch {}
+    });
     es.addEventListener('record_removed', (evt) => {
       try {
         const { recordId } = JSON.parse(evt.data);
@@ -72,9 +78,24 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
       setError('');
       const { record } = await api.manualCheckIn(sessionId, addForm);
       setRecords((prev) => (prev.some((r) => r.id === record.id) ? prev : [record, ...prev]));
-      setAddForm({ studentId: '', studentName: '', note: '' });
+      setAddForm({ studentId: '', studentName: '', status: 'present', note: '' });
       setShowAdd(false);
       toast(`Added ${record.studentName} to register`, 'success');
+    } catch (err) {
+      setError(err.message);
+      toast(err.message, 'error');
+    }
+  }
+
+  async function handleToggleStatus(record) {
+    const nextStatus = record.status === 'late' ? 'present' : 'late';
+    try {
+      const { record: updated } = await api.updateRecord(sessionId, record.id, { status: nextStatus });
+      setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      toast(
+        `${record.studentName} marked ${nextStatus === 'late' ? 'Late' : 'Present'}`,
+        'info'
+      );
     } catch (err) {
       setError(err.message);
       toast(err.message, 'error');
@@ -117,11 +138,13 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
     return (
       r.studentName.toLowerCase().includes(q) ||
       r.studentId.toLowerCase().includes(q) ||
+      (r.status || '').toLowerCase().includes(q) ||
       (r.note || '').toLowerCase().includes(q)
     );
   });
 
-  const qrCount = records.filter((r) => r.method === 'qr').length;
+  const lateCount = records.filter((r) => r.status === 'late').length;
+  const onTimeCount = records.length - lateCount;
   const manualCount = records.filter((r) => r.method === 'manual').length;
 
   return (
@@ -162,7 +185,7 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
       ) : (
         <>
           <div style={{ marginBottom: 22 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
               <span className="course-code-label mono">{session.classCode}</span>
               <span className="status-tag">
                 <span
@@ -172,6 +195,9 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
                 />
                 {session.status === 'active' ? 'Open' : session.status === 'paused' ? 'Paused' : 'Closed'}
               </span>
+              {session.lateAfterMinutes && (
+                <span className="badge-late">Late after {session.lateAfterMinutes}m</span>
+              )}
             </div>
             <h1 style={{ fontSize: '1.4rem', fontWeight: 700, letterSpacing: '-0.015em' }}>{session.title}</h1>
             <p style={{ color: 'var(--ink-muted)', fontSize: '0.86rem', marginTop: 2 }}>
@@ -180,14 +206,22 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
             </p>
           </div>
 
-          <div className="summary-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <div className="summary-strip" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
             <div className="summary-cell">
-              <div className="summary-label">Total Present</div>
+              <div className="summary-label">Total Recorded</div>
               <div className="summary-value">{records.length}</div>
             </div>
             <div className="summary-cell">
-              <div className="summary-label">QR Scans</div>
-              <div className="summary-value">{qrCount}</div>
+              <div className="summary-label">On Time</div>
+              <div className="summary-value" style={{ color: 'var(--ok)' }}>
+                {onTimeCount}
+              </div>
+            </div>
+            <div className="summary-cell">
+              <div className="summary-label">Late</div>
+              <div className="summary-value" style={{ color: lateCount > 0 ? 'var(--warn)' : 'var(--ink)' }}>
+                {lateCount}
+              </div>
             </div>
             <div className="summary-cell">
               <div className="summary-label">Manual Entries</div>
@@ -205,7 +239,7 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
               <input
                 className="input"
                 style={{ paddingLeft: 34 }}
-                placeholder="Filter by name or ID..."
+                placeholder="Filter by name, ID, or status..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -229,6 +263,7 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
                       <th>#</th>
                       <th>Student ID</th>
                       <th>Full Name</th>
+                      <th>Status</th>
                       <th>Method</th>
                       <th>Time Recorded</th>
                       <th className="no-print" style={{ textAlign: 'right' }}>Action</th>
@@ -248,6 +283,16 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
                           {rec.note && (
                             <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>{rec.note}</div>
                           )}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={`badge-toggle ${rec.status === 'late' ? 'badge-late' : 'badge-present'}`}
+                            onClick={() => handleToggleStatus(rec)}
+                            title="Click to toggle Present / Late"
+                          >
+                            {rec.status === 'late' ? 'Late' : 'Present'}
+                          </button>
                         </td>
                         <td style={{ fontSize: '0.82rem', color: 'var(--ink-secondary)' }}>
                           {rec.method === 'qr' ? 'QR Scan' : 'Manual'}
@@ -305,6 +350,17 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
                   onChange={(e) => setAddForm({ ...addForm, studentName: e.target.value })}
                   required
                 />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Status</label>
+                <select
+                  className="select"
+                  value={addForm.status}
+                  onChange={(e) => setAddForm({ ...addForm, status: e.target.value })}
+                >
+                  <option value="present">Present (On Time)</option>
+                  <option value="late">Late</option>
+                </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Note (Optional)</label>

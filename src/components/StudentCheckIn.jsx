@@ -208,6 +208,12 @@ export default function StudentCheckIn({ onGoHome }) {
                 </span>
               </div>
               <div className="receipt-row">
+                <span style={{ color: 'var(--ink-muted)' }}>Status</span>
+                <span className={receipt.record?.status === 'late' ? 'badge-late' : 'badge-present'}>
+                  {receipt.record?.status === 'late' ? 'Late' : 'Present'}
+                </span>
+              </div>
+              <div className="receipt-row">
                 <span style={{ color: 'var(--ink-muted)' }}>Recorded At</span>
                 <span className="mono">{new Date(receipt.record?.checkedInAt).toLocaleTimeString()}</span>
               </div>

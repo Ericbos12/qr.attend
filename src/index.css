@@ -408,6 +408,101 @@ body {
   border-left: 1px solid var(--border);
 }
 
+.nav-user-btn {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.14s ease;
+}
+
+.nav-user-btn:hover {
+  background: var(--surface-subtle);
+}
+
+.text-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.text-link-btn:hover {
+  text-decoration: underline;
+}
+
+.badge-present,
+.badge-late {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.badge-present {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge-late {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.badge-toggle {
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.14s ease, border-color 0.14s ease;
+}
+
+.badge-toggle:hover {
+  border-color: currentColor;
+}
+
+.filter-bar {
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rate-track {
+  width: 64px;
+  height: 6px;
+  background: var(--surface-subtle);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.rate-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
 .teacher-avatar {
   width: 28px;
   height: 28px;

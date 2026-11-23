@@ -36,9 +36,15 @@ export function saveStudentProfile(profile) {
   localStorage.setItem(STUDENT_PROFILE_KEY, JSON.stringify(profile));
 }
 
-export function isLocalhostOrigin() {
-  const host = window.location.hostname;
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+function buildQuery(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== null && v !== undefined && String(v).trim() !== '') {
+      qs.set(k, String(v).trim());
+    }
+  }
+  const str = qs.toString();
+  return str ? `?${str}` : '';
 }
 
 async function request(path, options = {}) {
@@ -71,7 +77,7 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  // Teacher Administrator Auth
+  // Teacher Administrator Auth & Password Management
   login: (email, password) =>
     request('/api/auth/login', {
       method: 'POST',
@@ -85,9 +91,23 @@ export const api = {
       body: JSON.stringify({ name, email, password }),
     }),
   me: () => request('/api/auth/me'),
-
-  // Silent LAN IP helper for local Wi-Fi QR scanning
-  getNetworkInfo: () => request('/api/network-info'),
+  changePassword: (currentPassword, newPassword) =>
+    request('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  forgotPassword: (email) =>
+    request('/api/auth/forgot-password', {
+      method: 'POST',
+      public: true,
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (email, code, newPassword) =>
+    request('/api/auth/reset-password', {
+      method: 'POST',
+      public: true,
+      body: JSON.stringify({ email, code, newPassword }),
+    }),
 
   // Saved Course Codes / Classes
   getClasses: () => request('/api/classes'),
@@ -114,12 +134,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  updateRecord: (sessionId, recordId, payload) =>
+    request(`/api/sessions/${sessionId}/records/${recordId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   removeRecord: (sessionId, recordId) =>
     request(`/api/sessions/${sessionId}/records/${recordId}`, { method: 'DELETE' }),
   getExportCsvUrl: (sessionId) =>
     `/api/sessions/${sessionId}/export.csv?auth=${encodeURIComponent(getAuthToken())}`,
   getStreamUrl: (sessionId) =>
     `/api/sessions/${sessionId}/stream?auth=${encodeURIComponent(getAuthToken())}`,
+
+  // Reports & Bulk Export
+  getReportSummary: (filters = {}) =>
+    request(`/api/reports/summary${buildQuery(filters)}`),
+  getReportSummaryCsvUrl: (filters = {}) =>
+    `/api/reports/summary.csv${buildQuery({ ...filters, auth: getAuthToken() })}`,
+  getReportRecordsCsvUrl: (filters = {}) =>
+    `/api/reports/records.csv${buildQuery({ ...filters, auth: getAuthToken() })}`,
 
   // Public Student QR Claim + Check-In
   claimQrScan: (payload) =>

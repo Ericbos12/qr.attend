@@ -3,6 +3,7 @@ import {
   QrCode,
   BookOpen,
   ClipboardList,
+  BarChart3,
   LogOut,
   Menu,
   X,
@@ -10,7 +11,10 @@ import {
   Moon,
   Radio,
   ChevronRight,
+  KeyRound,
 } from 'lucide-react';
+import { api } from '../api';
+import { useFeedback } from './UiFeedback';
 
 const NAV_ITEMS = [
   { path: '/', label: 'Courses', icon: BookOpen, match: (p) => p === '/' || p === '/courses' },
@@ -19,6 +23,12 @@ const NAV_ITEMS = [
     label: 'Attendance Register',
     icon: ClipboardList,
     match: (p) => p === '/sessions' || p.startsWith('/session/'),
+  },
+  {
+    path: '/reports',
+    label: 'Reports',
+    icon: BarChart3,
+    match: (p) => p === '/reports',
   },
 ];
 
@@ -34,11 +44,48 @@ export default function AppShell({
   breadcrumb = null,
   children,
 }) {
+  const { toast } = useFeedback();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwError, setPwError] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
 
   useEffect(() => {
     setMobileOpen(false);
   }, [path]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') setShowPasswordModal(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    setPwError('');
+    if (pwForm.newPassword.length < 6) {
+      setPwError('New password must be at least 6 characters.');
+      return;
+    }
+    if (pwForm.newPassword !== pwForm.confirmPassword) {
+      setPwError('New passwords do not match.');
+      return;
+    }
+    setPwSaving(true);
+    try {
+      await api.changePassword(pwForm.currentPassword, pwForm.newPassword);
+      toast('Password updated successfully', 'success');
+      setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setShowPasswordModal(false);
+    } catch (err) {
+      setPwError(err.message);
+    } finally {
+      setPwSaving(false);
+    }
+  }
 
   const primaryLive = liveSessions[0] || null;
 
@@ -106,7 +153,15 @@ export default function AppShell({
               {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
             </button>
 
-            <div className="nav-user desktop-only">
+            <button
+              type="button"
+              className="nav-user nav-user-btn desktop-only"
+              onClick={() => {
+                setPwError('');
+                setShowPasswordModal(true);
+              }}
+              title="Account & Password Settings"
+            >
               <div className="teacher-avatar">
                 {(teacher?.name || 'A')
                   .split(' ')
@@ -116,7 +171,7 @@ export default function AppShell({
                   .toUpperCase()}
               </div>
               <span className="nav-user-name">{teacher?.name}</span>
-            </div>
+            </button>
 
             <button
               type="button"
@@ -159,9 +214,22 @@ export default function AppShell({
             </div>
             <div className="mobile-drawer-footer">
               <span style={{ fontSize: '0.84rem', fontWeight: 600 }}>{teacher?.name}</span>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={onLogout}>
-                <LogOut size={14} /> Sign Out
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    setPwError('');
+                    setShowPasswordModal(true);
+                  }}
+                >
+                  <KeyRound size={14} /> Password
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={onLogout}>
+                  <LogOut size={14} /> Sign Out
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -188,6 +256,82 @@ export default function AppShell({
       <main className="app-content view-fade" key={path}>
         {children}
       </main>
+
+      {/* Change Password Modal */}
+      {showPasswordModal && (
+        <div className="modal-backdrop" onClick={() => setShowPasswordModal(false)}>
+          <div className="modal modal-animate" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Account Security</h3>
+              <button
+                type="button"
+                className="btn btn-ghost icon-btn"
+                onClick={() => setShowPasswordModal(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="alert alert-info" style={{ marginBottom: 16 }}>
+              <div>
+                <strong>{teacher?.name}</strong>
+                <div style={{ fontSize: '0.78rem', color: 'var(--ink-secondary)' }}>{teacher?.email}</div>
+              </div>
+            </div>
+
+            {pwError && <div className="alert alert-error">{pwError}</div>}
+
+            <form onSubmit={handleChangePassword}>
+              <div className="form-group">
+                <label className="form-label">Current Password</label>
+                <input
+                  type="password"
+                  className="input"
+                  value={pwForm.currentPassword}
+                  onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">New Password</label>
+                <input
+                  type="password"
+                  className="input"
+                  placeholder="Minimum 6 characters"
+                  value={pwForm.newPassword}
+                  onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })}
+                  required
+                  minLength={6}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Confirm New Password</label>
+                <input
+                  type="password"
+                  className="input"
+                  value={pwForm.confirmPassword}
+                  onChange={(e) => setPwForm({ ...pwForm, confirmPassword: e.target.value })}
+                  required
+                  minLength={6}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowPasswordModal(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={pwSaving}>
+                  <KeyRound size={14} /> {pwSaving ? 'Updating...' : 'Update Password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

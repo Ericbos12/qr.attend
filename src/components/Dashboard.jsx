@@ -42,6 +42,7 @@ export default function Dashboard({
     title: '',
     room: '',
     rotateIntervalSec: 8,
+    lateAfterMinutes: '',
     preventDuplicateDevice: true,
     useGeoLock: false,
     geoRadiusMeters: 75,
@@ -123,6 +124,7 @@ export default function Dashboard({
       title: `${cls.code} — ${today}`,
       room: cls.room || '',
       rotateIntervalSec: 8,
+      lateAfterMinutes: '',
       preventDuplicateDevice: true,
       useGeoLock: false,
       geoRadiusMeters: 75,
@@ -162,6 +164,7 @@ export default function Dashboard({
         title: sessionConfig.title,
         room: sessionConfig.room,
         rotateIntervalSec: sessionConfig.rotateIntervalSec,
+        lateAfterMinutes: sessionConfig.lateAfterMinutes ? Number(sessionConfig.lateAfterMinutes) : null,
         preventDuplicateDevice: sessionConfig.preventDuplicateDevice,
         geoLock:
           sessionConfig.useGeoLock && sessionConfig.geoCoords
@@ -236,10 +239,16 @@ export default function Dashboard({
           </p>
         </div>
 
-        {viewMode === 'courses' && (
+        {viewMode === 'courses' ? (
           <button type="button" className="btn btn-primary" onClick={openNewCourseModal}>
             <Plus size={15} /> Add Course
           </button>
+        ) : (
+          sessions.length > 0 && (
+            <a className="btn btn-secondary btn-sm" href={api.getReportRecordsCsvUrl()} download>
+              <Download size={14} /> Export All CSV
+            </a>
+          )
         )}
       </div>
 
@@ -466,7 +475,12 @@ export default function Dashboard({
                           </span>
                         </td>
                         <td className="mono" style={{ fontWeight: 600 }}>
-                          {sess.attendeeCount}
+                          <span>{sess.attendeeCount}</span>
+                          {sess.lateCount > 0 && (
+                            <span className="badge-late" style={{ marginLeft: 8 }}>
+                              {sess.lateCount} late
+                            </span>
+                          )}
                         </td>
                         <td>
                           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
@@ -621,6 +635,24 @@ export default function Dashboard({
                 <span className="form-hint">
                   Screenshots and forwarded links expire automatically once the QR code rotates.
                 </span>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Mark Late Arrivals After (Optional)</label>
+                <select
+                  className="select"
+                  value={sessionConfig.lateAfterMinutes}
+                  onChange={(e) =>
+                    setSessionConfig({ ...sessionConfig, lateAfterMinutes: e.target.value })
+                  }
+                >
+                  <option value="">Disabled (all check-ins marked Present)</option>
+                  <option value="5">5 minutes after start</option>
+                  <option value="10">10 minutes after start</option>
+                  <option value="15">15 minutes after start</option>
+                  <option value="20">20 minutes after start</option>
+                  <option value="30">30 minutes after start</option>
+                </select>
               </div>
 
               <div className="modal-inset-box">

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: attendqr
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ATTENDQR_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: attendqr-db
+          property: connectionString
+
+databases:
+  - name: attendqr-db
+    plan: free
