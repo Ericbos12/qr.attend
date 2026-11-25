@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import {
   QrCode,
   Plus,
@@ -10,12 +11,8 @@ import {
   Pencil,
   Crosshair,
   Search,
-  Radio,
-  BookOpen,
-  Users,
-  Calendar,
   ArrowRight,
-  Inbox,
+  Loader2,
 } from 'lucide-react';
 import { api } from '../api';
 import { useFeedback } from './UiFeedback';
@@ -33,6 +30,13 @@ export default function Dashboard({
   const { toast, confirm } = useFeedback();
   const [error, setError] = useState('');
 
+  // Overview stage selection + live QR product preview
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [stageQrUrl, setStageQrUrl] = useState('');
+  const [stageQrMeta, setStageQrMeta] = useState(null);
+  const [stageRemainingSec, setStageRemainingSec] = useState(8);
+  const [stageProgressPct, setStageProgressPct] = useState(100);
+
   // Filters
   const [sessionSearch, setSessionSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -41,9 +45,11 @@ export default function Dashboard({
   const [showCourseModal, setShowCourseModal] = useState(false);
   const [editingClassId, setEditingClassId] = useState(null);
   const [courseForm, setCourseForm] = useState({ code: '', name: '', room: '' });
+  const [savingCourse, setSavingCourse] = useState(false);
 
   // Start session modal
   const [startTargetClass, setStartTargetClass] = useState(null);
+  const [startingSession, setStartingSession] = useState(false);
   const [sessionConfig, setSessionConfig] = useState({
     title: '',
     room: '',
@@ -56,6 +62,32 @@ export default function Dashboard({
   });
   const [geoStatus, setGeoStatus] = useState('');
 
+  const liveSessions = useMemo(
+    () => sessions.filter((s) => s.status === 'active' || s.status === 'paused'),
+    [sessions]
+  );
+  const primaryLive = liveSessions[0] || null;
+  const activeCount = useMemo(
+    () => sessions.filter((s) => s.status === 'active').length,
+    [sessions]
+  );
+  const totalCheckIns = useMemo(
+    () => sessions.reduce((acc, s) => acc + (s.attendeeCount || 0), 0),
+    [sessions]
+  );
+  const avgPerSession = sessions.length > 0 ? Math.round(totalCheckIns / sessions.length) : 0;
+
+  const selectedCourse = useMemo(() => {
+    if (classes.length === 0) return null;
+    return classes.find((c) => c.id === selectedClassId) || classes[0];
+  }, [classes, selectedClassId]);
+
+  useEffect(() => {
+    if (classes.length > 0 && !classes.some((c) => c.id === selectedClassId)) {
+      setSelectedClassId(classes[0].id);
+    }
+  }, [classes, selectedClassId]);
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
@@ -66,6 +98,87 @@ export default function Dashboard({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Show actual live rotating QR code on Overview when a session is active,
+  // or a crisp preview QR for the selected course when ready to launch
+  useEffect(() => {
+    if (viewMode !== 'overview') return;
+    let cancelled = false;
+
+    if (primaryLive) {
+      let pollTimer = null;
+      let tickTimer = null;
+      let serverOffset = 0;
+      let latestQr = null;
+
+      async function fetchLiveQr() {
+        try {
+          const data = await api.getSessionQr(primaryLive.id);
+          if (cancelled || !data?.qr) return;
+          latestQr = data.qr;
+          setStageQrMeta(data.qr);
+          if (data.qr.serverTime) {
+            serverOffset = data.qr.serverTime - Date.now();
+          }
+          const origin =
+            window.location.hostname === 'localhost' && data.lanOrigin
+              ? data.lanOrigin
+              : window.location.origin;
+          const scanUrl = `${origin}/checkin?s=${encodeURIComponent(primaryLive.id)}&t=${encodeURIComponent(data.qr.token)}`;
+          const img = await QRCode.toDataURL(scanUrl, {
+            width: 240,
+            margin: 1,
+            errorCorrectionLevel: 'M',
+            color: { dark: '#0b1220', light: '#ffffff' },
+          });
+          if (!cancelled) setStageQrUrl(img);
+        } catch {}
+      }
+
+      fetchLiveQr();
+      tickTimer = setInterval(() => {
+        if (!latestQr) return;
+        const now = Date.now() + serverOffset;
+        const remMs = Math.max(0, latestQr.expiresAt - now);
+        const totalMs = (latestQr.intervalSec || 8) * 1000;
+        setStageRemainingSec(Math.ceil(remMs / 1000));
+        setStageProgressPct(Math.max(0, Math.min(100, (remMs / totalMs) * 100)));
+        if (remMs <= 250 && !pollTimer) {
+          pollTimer = setTimeout(() => {
+            pollTimer = null;
+            fetchLiveQr();
+          }, 300);
+        }
+      }, 200);
+
+      return () => {
+        cancelled = true;
+        if (tickTimer) clearInterval(tickTimer);
+        if (pollTimer) clearTimeout(pollTimer);
+      };
+    }
+
+    setStageQrMeta(null);
+    if (selectedCourse) {
+      const previewPayload = `${window.location.origin}/checkin?course=${encodeURIComponent(selectedCourse.code)}`;
+      QRCode.toDataURL(previewPayload, {
+        width: 240,
+        margin: 1,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#0b1220', light: '#ffffff' },
+      })
+        .then((img) => {
+          if (!cancelled) setStageQrUrl(img);
+        })
+        .catch(() => {});
+    } else {
+      setStageQrUrl('');
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewMode, primaryLive?.id, primaryLive?.status, selectedCourse?.id, selectedCourse?.code]);
 
   function openNewCourseModal() {
     setEditingClassId(null);
@@ -81,14 +194,17 @@ export default function Dashboard({
 
   async function handleSaveCourse(e) {
     e.preventDefault();
+    if (savingCourse) return;
+    setSavingCourse(true);
     try {
       setError('');
       if (editingClassId) {
         await api.updateClass(editingClassId, courseForm);
-        toast(`Updated ${courseForm.code.toUpperCase()}`, 'success');
+        toast(`Saved changes to ${courseForm.code.toUpperCase()}`, 'success');
       } else {
-        await api.createClass(courseForm);
-        toast(`Added course ${courseForm.code.toUpperCase()}`, 'success');
+        const res = await api.createClass(courseForm);
+        if (res?.class?.id) setSelectedClassId(res.class.id);
+        toast(`Added ${courseForm.code.toUpperCase()}`, 'success');
       }
       setCourseForm({ code: '', name: '', room: '' });
       setEditingClassId(null);
@@ -97,6 +213,8 @@ export default function Dashboard({
     } catch (err) {
       setError(err.message);
       toast(err.message, 'error');
+    } finally {
+      setSavingCourse(false);
     }
   }
 
@@ -162,7 +280,8 @@ export default function Dashboard({
 
   async function handleStartSession(e) {
     e.preventDefault();
-    if (!startTargetClass) return;
+    if (!startTargetClass || startingSession) return;
+    setStartingSession(true);
     try {
       setError('');
       const payload = {
@@ -184,11 +303,13 @@ export default function Dashboard({
       const { session } = await api.createSession(payload);
       setStartTargetClass(null);
       await onRefresh?.();
-      toast(`QR session started for ${startTargetClass.code}`, 'success');
+      toast(`Live QR started for ${startTargetClass.code}`, 'success');
       onOpenProjector(session.id);
     } catch (err) {
       setError(err.message);
       toast(err.message, 'error');
+    } finally {
+      setStartingSession(false);
     }
   }
 
@@ -224,345 +345,445 @@ export default function Dashboard({
     });
   }, [sessions, sessionSearch, statusFilter]);
 
-  const totalCheckIns = sessions.reduce((acc, s) => acc + (s.attendeeCount || 0), 0);
-  const liveSessions = sessions.filter((s) => s.status === 'active' || s.status === 'paused');
-  const activeCount = sessions.filter((s) => s.status === 'active').length;
-
   return (
     <div>
       {error && <div className="alert alert-error">{error}</div>}
 
-      {/* Overview Workspace View */}
+      {/* ==========================================
+          OVERVIEW — PRODUCT-FIRST ROLL-CALL STAGE
+         ========================================== */}
       {viewMode === 'overview' && (
-        <>
-          <div className="overview-hero">
-            <div>
-              <div className="overview-eyebrow">LECTURER WORKSPACE</div>
-              <h1 className="overview-greeting">Good to see you 👋</h1>
-              <p className="overview-sub">Everything you need to keep attendance on track.</p>
-            </div>
-            <button type="button" className="btn btn-primary btn-hero-cta" onClick={openNewCourseModal}>
-              <Plus size={16} /> New course
-            </button>
-          </div>
-
-          <div className="overview-stats-grid">
-            <div className="stat-card">
-              <div className="stat-icon stat-icon-indigo">
-                <BookOpen size={18} />
+        <div className="overview-stack">
+          {loading ? (
+            <div className="rollcall-stage">
+              <div className="rollcall-stage-copy" style={{ gap: 14 }}>
+                <span className="skeleton" style={{ height: 28, width: '62%' }} />
+                <span className="skeleton" style={{ height: 18, width: '44%' }} />
+                <span className="skeleton" style={{ height: 46, width: 220, marginTop: 8 }} />
               </div>
-              <div className="stat-label">Total courses</div>
-              <div className="stat-value">{classes.length}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon stat-icon-green">
-                <Radio size={18} />
+              <div className="rollcall-stage-preview">
+                <span className="skeleton" style={{ width: 196, height: 196, borderRadius: 10 }} />
               </div>
-              <div className="stat-label">Live sessions</div>
-              <div className="stat-value">{activeCount}</div>
             </div>
-
-            <div className="stat-card">
-              <div className="stat-icon stat-icon-amber">
-                <Users size={18} />
-              </div>
-              <div className="stat-label">Total check-ins</div>
-              <div className="stat-value">{totalCheckIns}</div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon stat-icon-sky">
-                <Calendar size={18} />
-              </div>
-              <div className="stat-label">Sessions held</div>
-              <div className="stat-value">{sessions.length}</div>
-            </div>
-          </div>
-
-          {liveSessions.length > 0 ? (
-            <div className="quick-start-banner">
-              <div className="quick-start-content">
-                <div className="quick-start-eyebrow" style={{ color: '#6ee7b7' }}>
-                  ● {liveSessions[0].status === 'active' ? 'LIVE SESSION' : 'PAUSED SESSION'}
+          ) : primaryLive ? (
+            /* Active / Paused Live Session — Actual Live QR on Stage */
+            <section className="rollcall-stage rollcall-stage-live" aria-label="Active attendance session">
+              <div className="rollcall-stage-copy">
+                <div className="rollcall-live-status">
+                  <span
+                    className={`status-dot ${primaryLive.status === 'active' ? 'live' : 'paused'}`}
+                  />
+                  <span>
+                    {primaryLive.status === 'active' ? 'Accepting check-ins' : 'Check-in paused'}
+                  </span>
+                  {primaryLive.room && <span className="rollcall-sep">·</span>}
+                  {primaryLive.room && <span>{primaryLive.room}</span>}
                 </div>
-                <h2 className="quick-start-title">
-                  {liveSessions[0].classCode} — {liveSessions[0].title}
-                </h2>
-                <p className="quick-start-sub">
-                  {liveSessions[0].attendeeCount} students checked in
-                  {liveSessions[0].room ? ` · ${liveSessions[0].room}` : ''}. Open the live projector to display the rotating QR code.
-                </p>
-              </div>
-              <div className="quick-start-actions">
-                <button
-                  type="button"
-                  className="btn quick-start-btn"
-                  onClick={() => onOpenProjector(liveSessions[0].id)}
-                >
-                  Open live QR <ArrowRight size={15} />
-                </button>
-                <button
-                  type="button"
-                  className="btn quick-start-btn-ghost"
-                  onClick={() => onOpenSessionDetail(liveSessions[0].id)}
-                >
-                  Register
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="quick-start-banner">
-              <div className="quick-start-content">
-                <div className="quick-start-eyebrow">QUICK START</div>
-                <h2 className="quick-start-title">Ready for your next lecture?</h2>
-                <p className="quick-start-sub">
-                  Create a course, start a session, and put a QR code up for your students.
-                </p>
-              </div>
-              <div className="quick-start-actions">
-                {classes.length === 0 ? (
+
+                <h1 className="rollcall-headline">
+                  <span className="mono">{primaryLive.classCode}</span> attendance is{' '}
+                  {primaryLive.status === 'active' ? 'open' : 'paused'}
+                </h1>
+
+                <div className="rollcall-live-counter">
+                  <span className="rollcall-big-num tnum">{primaryLive.attendeeCount}</span>
+                  <span className="rollcall-big-unit">
+                    {primaryLive.attendeeCount === 1 ? 'student recorded' : 'students recorded'}
+                    {primaryLive.lateCount > 0 ? ` · ${primaryLive.lateCount} late` : ''}
+                  </span>
+                </div>
+
+                <div className="rollcall-actions">
                   <button
                     type="button"
-                    className="btn quick-start-btn"
+                    className="btn btn-primary btn-cta-xl"
+                    onClick={() => onOpenProjector(primaryLive.id)}
+                  >
+                    <QrCode size={18} strokeWidth={1.75} />
+                    <span>Open full-screen projector</span>
+                    <ArrowRight size={16} strokeWidth={1.75} className="icon-optical-arrow" />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-lg"
+                    onClick={() => onOpenSessionDetail(primaryLive.id)}
+                  >
+                    <Eye size={16} strokeWidth={1.75} />
+                    <span>View register</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="rollcall-stage-preview">
+                <div className="rollcall-qr-frame">
+                  {stageQrUrl ? (
+                    <img
+                      src={stageQrUrl}
+                      alt={`Live QR code for ${primaryLive.classCode}`}
+                      width={196}
+                      height={196}
+                    />
+                  ) : (
+                    <span className="skeleton" style={{ width: 196, height: 196 }} />
+                  )}
+                  <div className="rollcall-qr-bar">
+                    <div
+                      className="rollcall-qr-bar-fill"
+                      style={{ width: `${stageProgressPct}%` }}
+                    />
+                  </div>
+                  <div className="rollcall-qr-caption tnum">
+                    <span>{primaryLive.status === 'active' ? `Rotates in ${stageRemainingSec}s` : 'Paused'}</span>
+                    <span>{stageQrMeta?.intervalSec || 8}s cycle</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : selectedCourse ? (
+            /* Ready to Launch — Enlarged Main Feature */
+            <section className="rollcall-stage" aria-label="Start live QR attendance">
+              <div className="rollcall-stage-copy">
+                <h1 className="rollcall-headline">
+                  Project a live QR code for{' '}
+                  <span className="mono" style={{ color: 'var(--accent)' }}>
+                    {selectedCourse.code}
+                  </span>
+                </h1>
+
+                <p className="rollcall-desc">
+                  {selectedCourse.name}
+                  {selectedCourse.room ? ` · ${selectedCourse.room}` : ''} · Students scan from their seats with rotating anti-screenshot codes.
+                </p>
+
+                {classes.length > 1 && (
+                  <div className="rollcall-course-picker">
+                    <label htmlFor="stage-course-select" className="rollcall-picker-label">
+                      Course
+                    </label>
+                    <select
+                      id="stage-course-select"
+                      className="select rollcall-picker-select"
+                      value={selectedCourse.id}
+                      onChange={(e) => setSelectedClassId(e.target.value)}
+                    >
+                      {classes.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.code} — {cls.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="rollcall-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-cta-xl"
+                    onClick={() => openStartSessionModal(selectedCourse)}
+                  >
+                    <Play size={17} strokeWidth={1.75} className="icon-optical-play" />
+                    <span>Start live QR attendance</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-lg"
                     onClick={openNewCourseModal}
                   >
-                    Set up a course <ArrowRight size={15} />
+                    <Plus size={16} strokeWidth={1.75} />
+                    <span>New course</span>
                   </button>
-                ) : (
+                </div>
+              </div>
+
+              <div className="rollcall-stage-preview">
+                <div className="rollcall-qr-frame rollcall-qr-frame-idle">
+                  {stageQrUrl ? (
+                    <img
+                      src={stageQrUrl}
+                      alt={`QR preview for ${selectedCourse.code}`}
+                      width={186}
+                      height={186}
+                      style={{ opacity: 0.88 }}
+                    />
+                  ) : (
+                    <span className="skeleton" style={{ width: 186, height: 186 }} />
+                  )}
+                  <div className="rollcall-qr-caption">
+                    <span className="mono" style={{ fontWeight: 600, color: 'var(--ink)' }}>
+                      {selectedCourse.code}
+                    </span>
+                    <span className="tnum">8s rotating QR</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : (
+            /* Empty Workspace — Single Clear Onboarding Action */
+            <section className="rollcall-stage rollcall-stage-empty">
+              <div className="rollcall-stage-copy">
+                <h1 className="rollcall-headline">
+                  Create your first course to run QR roll call
+                </h1>
+                <p className="rollcall-desc">
+                  Save a course code once, display a rotating QR code during lectures, and export attendance registers as CSV.
+                </p>
+                <div className="rollcall-actions">
                   <button
                     type="button"
-                    className="btn quick-start-btn"
-                    onClick={() => openStartSessionModal(classes[0])}
+                    className="btn btn-primary btn-cta-xl"
+                    onClick={openNewCourseModal}
                   >
-                    Start live session <ArrowRight size={15} />
+                    <Plus size={18} strokeWidth={1.75} />
+                    <span>Add your first course</span>
                   </button>
-                )}
+                </div>
               </div>
-            </div>
+            </section>
           )}
 
+          {/* Compact Tabular Key Numbers (grouped cleanly by spacing) */}
+          <div className="metrics-strip">
+            <div className="metric-item">
+              <span className="metric-num tnum">{classes.length}</span>
+              <span className="metric-label">Courses</span>
+            </div>
+            <div className="metric-item">
+              <span className="metric-num tnum" style={{ color: activeCount > 0 ? 'var(--ok)' : 'var(--ink)' }}>
+                {activeCount}
+              </span>
+              <span className="metric-label">Open now</span>
+            </div>
+            <div className="metric-item">
+              <span className="metric-num tnum">{totalCheckIns}</span>
+              <span className="metric-label">Check-ins</span>
+            </div>
+            <div className="metric-item">
+              <span className="metric-num tnum">{sessions.length}</span>
+              <span className="metric-label">
+                {sessions.length > 0 ? `Sessions (${avgPerSession} avg)` : 'Sessions held'}
+              </span>
+            </div>
+          </div>
+
+          {/* Two-Column Workspace Lists — Grouped by Spacing, Zero Filler Badges */}
           <div className="overview-bottom-grid">
-            <div className="overview-card">
-              <div className="overview-card-header">
-                <h3 className="overview-card-title">Your courses</h3>
+            <section className="overview-section">
+              <div className="overview-section-head">
+                <h2 className="section-heading">Courses</h2>
                 <button
                   type="button"
                   className="text-link-btn"
                   onClick={() => onNavigate?.('/courses')}
                 >
-                  View all <ArrowRight size={13} />
+                  All courses <ArrowRight size={14} strokeWidth={1.75} />
                 </button>
               </div>
 
-              {loading ? (
-                <div className="overview-empty">Loading courses...</div>
-              ) : classes.length === 0 ? (
-                <div className="overview-empty">
-                  <Inbox size={26} className="overview-empty-icon" />
-                  <p>No courses yet. Add your first course to get started.</p>
-                </div>
-              ) : (
-                <div className="overview-list">
-                  {classes.slice(0, 4).map((cls) => (
-                    <div className="overview-list-row" key={cls.id}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span className="course-code-label mono">{cls.code}</span>
-                          <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{cls.name}</span>
+              <div className="panel panel-padded">
+                {loading ? (
+                  <div className="skeleton-list">
+                    <span className="skeleton" style={{ height: 48 }} />
+                    <span className="skeleton" style={{ height: 48 }} />
+                    <span className="skeleton" style={{ height: 48 }} />
+                  </div>
+                ) : classes.length === 0 ? (
+                  <div className="overview-empty">
+                    <p>No courses added yet.</p>
+                  </div>
+                ) : (
+                  <div className="overview-list">
+                    {classes.slice(0, 5).map((cls) => (
+                      <div className="overview-list-row" key={cls.id}>
+                        <div style={{ minWidth: 0 }}>
+                          <div className="overview-course-line">
+                            <span className="course-code-text mono">{cls.code}</span>
+                            <span className="overview-course-title">{cls.name}</span>
+                          </div>
+                          <div className="overview-row-meta tnum">
+                            {cls.room ? `${cls.room} · ` : ''}
+                            {cls.sessionCount} {cls.sessionCount === 1 ? 'session' : 'sessions'} · {cls.totalCheckIns} check-ins
+                          </div>
                         </div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginTop: 3 }}>
-                          {cls.room ? `${cls.room} · ` : ''}
-                          {cls.sessionCount} {cls.sessionCount === 1 ? 'session' : 'sessions'} · {cls.totalCheckIns} check-ins
-                        </div>
+                        {cls.activeSessionId ? (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => onOpenProjector(cls.activeSessionId)}
+                          >
+                            <QrCode size={14} strokeWidth={1.75} /> Open QR
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => openStartSessionModal(cls)}
+                          >
+                            <Play size={13} strokeWidth={1.75} className="icon-optical-play" /> Start QR
+                          </button>
+                        )}
                       </div>
-                      {cls.activeSessionId ? (
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm"
-                          onClick={() => onOpenProjector(cls.activeSessionId)}
-                        >
-                          <QrCode size={13} /> Live QR
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openStartSessionModal(cls)}
-                        >
-                          <Play size={13} /> Start QR
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
 
-            <div className="overview-card">
-              <div className="overview-card-header">
-                <h3 className="overview-card-title">Recent sessions</h3>
+            <section className="overview-section">
+              <div className="overview-section-head">
+                <h2 className="section-heading">Recent sessions</h2>
                 <button
                   type="button"
                   className="text-link-btn"
-                  onClick={() => onNavigate?.('/reports')}
+                  onClick={() => onNavigate?.('/sessions')}
                 >
-                  View reports <ArrowRight size={13} />
+                  All sessions <ArrowRight size={14} strokeWidth={1.75} />
                 </button>
               </div>
 
-              {loading ? (
-                <div className="overview-empty">Loading sessions...</div>
-              ) : sessions.length === 0 ? (
-                <div className="overview-empty">
-                  <Inbox size={26} className="overview-empty-icon" />
-                  <p>Your lecture sessions will show up here.</p>
-                </div>
-              ) : (
-                <div className="overview-list">
-                  {sessions.slice(0, 5).map((sess) => (
-                    <button
-                      type="button"
-                      className="overview-session-row"
-                      key={sess.id}
-                      onClick={() =>
-                        sess.status !== 'ended'
-                          ? onOpenProjector(sess.id)
-                          : onOpenSessionDetail(sess.id)
-                      }
-                    >
-                      <div style={{ minWidth: 0, textAlign: 'left' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                          <span
-                            className={`status-dot ${
-                              sess.status === 'active'
-                                ? 'live'
-                                : sess.status === 'paused'
-                                ? 'paused'
-                                : ''
-                            }`}
-                          />
-                          <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{sess.title}</span>
+              <div className="panel panel-padded">
+                {loading ? (
+                  <div className="skeleton-list">
+                    <span className="skeleton" style={{ height: 48 }} />
+                    <span className="skeleton" style={{ height: 48 }} />
+                    <span className="skeleton" style={{ height: 48 }} />
+                  </div>
+                ) : sessions.length === 0 ? (
+                  <div className="overview-empty">
+                    <p>Recorded lecture sessions appear here.</p>
+                  </div>
+                ) : (
+                  <div className="overview-list">
+                    {sessions.slice(0, 6).map((sess) => (
+                      <button
+                        type="button"
+                        className="overview-session-row"
+                        key={sess.id}
+                        onClick={() =>
+                          sess.status !== 'ended'
+                            ? onOpenProjector(sess.id)
+                            : onOpenSessionDetail(sess.id)
+                        }
+                      >
+                        <div style={{ minWidth: 0, textAlign: 'left' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span
+                              className={`status-dot ${
+                                sess.status === 'active'
+                                  ? 'live'
+                                  : sess.status === 'paused'
+                                  ? 'paused'
+                                  : ''
+                              }`}
+                            />
+                            <span className="overview-session-title">{sess.title}</span>
+                          </div>
+                          <div className="overview-row-meta tnum" style={{ paddingLeft: 15 }}>
+                            <span className="mono">{sess.classCode}</span>
+                            {' · '}
+                            {new Date(sess.startedAt).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </div>
                         </div>
-                        <div style={{ fontSize: '0.76rem', color: 'var(--ink-muted)', marginTop: 2 }}>
-                          {new Date(sess.startedAt).toLocaleDateString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                        <div className="overview-session-right tnum">
+                          {sess.lateCount > 0 && (
+                            <span className="late-inline">{sess.lateCount} late</span>
+                          )}
+                          <span className="overview-session-count">{sess.attendeeCount}</span>
                         </div>
-                      </div>
-                      <span className="mono" style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink-secondary)' }}>
-                        {sess.attendeeCount}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
           </div>
-        </>
+        </div>
       )}
 
-      {/* Page Header for Courses & Sessions views */}
+      {/* ==========================================
+          PAGE HEADER FOR COURSES & SESSIONS VIEWS
+         ========================================== */}
       {viewMode !== 'overview' && (
         <div className="page-header">
-          <div>
-            <h1 className="page-title">
-              {viewMode === 'sessions' ? 'Live session & Register' : 'Courses'}
-            </h1>
-            <p className="page-sub">
-              {viewMode === 'sessions'
-                ? 'View attendance sessions, open live QR codes, or export registers as CSV.'
-                : 'Select a course to project a live rotating QR code for student attendance.'}
-            </p>
-          </div>
+          <h1 className="page-title">
+            {viewMode === 'sessions' ? 'Attendance register' : 'Courses'}
+          </h1>
 
           {viewMode === 'courses' ? (
             <button type="button" className="btn btn-primary" onClick={openNewCourseModal}>
-              <Plus size={15} /> New course
+              <Plus size={16} strokeWidth={1.75} /> New course
             </button>
           ) : (
             sessions.length > 0 && (
               <a className="btn btn-secondary btn-sm" href={api.getReportRecordsCsvUrl()} download>
-                <Download size={14} /> Export All CSV
+                <Download size={15} strokeWidth={1.75} /> Export all CSV
               </a>
             )
           )}
         </div>
       )}
 
-      {/* Courses View */}
+      {/* ==========================================
+          COURSES VIEW
+         ========================================== */}
       {viewMode === 'courses' && (
         <>
-          {liveSessions.length > 0 && (
-            <div className="live-banner">
-              <div className="live-banner-left">
-                <div className="live-banner-badge">
-                  <Radio size={14} />
-                  <span>{liveSessions[0].status === 'active' ? 'Live Now' : 'Paused'}</span>
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.96rem' }}>
-                    <span className="mono">{liveSessions[0].classCode}</span> — {liveSessions[0].title}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>
-                    {liveSessions[0].attendeeCount} students recorded
-                    {liveSessions[0].room ? ` · ${liveSessions[0].room}` : ''}
-                  </div>
-                </div>
+          {primaryLive && (
+            <div className="overview-live-strip" style={{ marginBottom: 24 }}>
+              <div className="overview-live-left">
+                <span
+                  className={`status-dot ${primaryLive.status === 'active' ? 'live' : 'paused'}`}
+                />
+                <span className="mono" style={{ fontWeight: 600 }}>
+                  {primaryLive.classCode}
+                </span>
+                <span style={{ fontWeight: 600 }}>{primaryLive.title}</span>
+                <span className="tnum" style={{ fontSize: '0.84rem', color: 'var(--ink-muted)' }}>
+                  {primaryLive.attendeeCount} recorded
+                  {primaryLive.room ? ` · ${primaryLive.room}` : ''}
+                </span>
               </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div className="overview-live-actions">
                 <button
                   type="button"
-                  className="btn btn-sm"
-                  style={{ background: '#ffffff', color: '#1e3a8a' }}
-                  onClick={() => onOpenProjector(liveSessions[0].id)}
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => onOpenSessionDetail(primaryLive.id)}
                 >
-                  <QrCode size={14} /> Open Live QR
+                  <Eye size={14} strokeWidth={1.75} /> Register
                 </button>
                 <button
                   type="button"
-                  className="btn btn-sm"
-                  style={{ background: 'rgba(255,255,255,0.14)', color: '#ffffff', borderColor: 'rgba(255,255,255,0.22)' }}
-                  onClick={() => onOpenSessionDetail(liveSessions[0].id)}
+                  className="btn btn-primary btn-sm"
+                  onClick={() => onOpenProjector(primaryLive.id)}
                 >
-                  <Eye size={14} /> Register
+                  <QrCode size={14} strokeWidth={1.75} /> Open QR
                 </button>
               </div>
             </div>
           )}
 
-          <div className="summary-strip" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            <div className="summary-cell">
-              <div className="summary-label">Saved Courses</div>
-              <div className="summary-value">{classes.length}</div>
-            </div>
-            <div className="summary-cell">
-              <div className="summary-label">Active QR Sessions</div>
-              <div className="summary-value" style={{ color: activeCount > 0 ? 'var(--ok)' : 'var(--ink)' }}>
-                {activeCount}
-              </div>
-            </div>
-            <div className="summary-cell">
-              <div className="summary-label">Total Attendance Recorded</div>
-              <div className="summary-value">{totalCheckIns}</div>
-            </div>
-          </div>
-
           {loading ? (
-            <div className="panel" style={{ padding: 32, textAlign: 'center', color: 'var(--ink-muted)' }}>
-              Loading courses...
+            <div className="courses-grid">
+              {[1, 2, 3].map((n) => (
+                <div className="course-card" key={n}>
+                  <span className="skeleton" style={{ height: 18, width: 84 }} />
+                  <span className="skeleton" style={{ height: 22, width: '78%' }} />
+                  <span className="skeleton" style={{ height: 38, width: '100%' }} />
+                </div>
+              ))}
             </div>
           ) : classes.length === 0 ? (
             <div className="panel" style={{ padding: 36, textAlign: 'center' }}>
-              <p style={{ fontWeight: 600, marginBottom: 4 }}>No courses saved yet</p>
-              <p style={{ color: 'var(--ink-muted)', fontSize: '0.86rem', marginBottom: 16 }}>
+              <p style={{ fontWeight: 600, marginBottom: 6 }}>No courses saved yet</p>
+              <p style={{ color: 'var(--ink-muted)', fontSize: '0.88rem', marginBottom: 18 }}>
                 Add your first course code to start taking QR attendance.
               </p>
               <button type="button" className="btn btn-primary" onClick={openNewCourseModal}>
-                <Plus size={15} /> Add Course
+                <Plus size={16} strokeWidth={1.75} /> Add course
               </button>
             </div>
           ) : (
@@ -570,8 +791,8 @@ export default function Dashboard({
               {classes.map((cls) => (
                 <div className="course-card" key={cls.id}>
                   <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span className="course-code-label mono">{cls.code}</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                      <span className="course-code-text mono">{cls.code}</span>
                       {cls.activeSessionId && (
                         <span className="status-tag">
                           <span className={`status-dot ${cls.activeSessionStatus === 'active' ? 'live' : 'paused'}`} />
@@ -580,7 +801,7 @@ export default function Dashboard({
                       )}
                     </div>
                     <div className="course-name">{cls.name}</div>
-                    <div className="course-meta">
+                    <div className="course-meta tnum">
                       {cls.room && <span>{cls.room}</span>}
                       <span>{cls.sessionCount} {cls.sessionCount === 1 ? 'session' : 'sessions'}</span>
                       <span>{cls.totalCheckIns} recorded</span>
@@ -594,34 +815,34 @@ export default function Dashboard({
                         className="btn btn-primary btn-full"
                         onClick={() => onOpenProjector(cls.activeSessionId)}
                       >
-                        <QrCode size={15} />
-                        Open Live QR
+                        <QrCode size={15} strokeWidth={1.75} />
+                        Open live QR
                       </button>
                     ) : (
                       <button
                         type="button"
-                        className="btn btn-dark btn-full"
+                        className="btn btn-primary btn-full"
                         onClick={() => openStartSessionModal(cls)}
                       >
-                        <Play size={14} />
-                        Take Attendance
+                        <Play size={14} strokeWidth={1.75} className="icon-optical-play" />
+                        Take attendance
                       </button>
                     )}
                     <button
                       type="button"
                       className="btn btn-ghost icon-btn"
                       onClick={() => openEditCourseModal(cls)}
-                      title="Edit Course"
+                      title="Edit course"
                     >
-                      <Pencil size={14} />
+                      <Pencil size={15} strokeWidth={1.75} />
                     </button>
                     <button
                       type="button"
                       className="btn btn-ghost icon-btn"
                       onClick={() => handleDeleteClass(cls)}
-                      title="Delete Course"
+                      title="Delete course"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={15} strokeWidth={1.75} />
                     </button>
                   </div>
                 </div>
@@ -631,13 +852,16 @@ export default function Dashboard({
         </>
       )}
 
-      {/* Attendance Register View */}
+      {/* ==========================================
+          ATTENDANCE REGISTER / SESSIONS VIEW
+         ========================================== */}
       {viewMode === 'sessions' && (
         <>
           <div className="section-header">
             <div style={{ position: 'relative', width: 260 }}>
               <Search
-                size={14}
+                size={15}
+                strokeWidth={1.75}
                 color="var(--ink-muted)"
                 style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }}
               />
@@ -665,10 +889,18 @@ export default function Dashboard({
           </div>
 
           <div className="panel">
-            {filteredSessions.length === 0 ? (
+            {loading ? (
+              <div style={{ padding: 20 }}>
+                <div className="skeleton-list">
+                  <span className="skeleton" style={{ height: 46 }} />
+                  <span className="skeleton" style={{ height: 46 }} />
+                  <span className="skeleton" style={{ height: 46 }} />
+                </div>
+              </div>
+            ) : filteredSessions.length === 0 ? (
               <div style={{ padding: 34, textAlign: 'center', color: 'var(--ink-muted)', fontSize: '0.88rem' }}>
                 {sessions.length === 0
-                  ? 'No sessions recorded yet. Go to Courses and select Take Attendance to begin.'
+                  ? 'No sessions recorded yet. Start a live QR session from Overview or Courses.'
                   : 'No sessions match your filter.'}
               </div>
             ) : (
@@ -688,12 +920,12 @@ export default function Dashboard({
                       <tr key={sess.id}>
                         <td>
                           <div style={{ fontWeight: 600 }}>{sess.title}</div>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
+                          <div style={{ fontSize: '0.82rem', color: 'var(--ink-muted)' }}>
                             <span className="mono">{sess.classCode}</span> — {sess.className}
                             {sess.room ? ` · ${sess.room}` : ''}
                           </div>
                         </td>
-                        <td style={{ fontSize: '0.84rem', color: 'var(--ink-secondary)' }}>
+                        <td className="tnum" style={{ fontSize: '0.84rem', color: 'var(--ink-secondary)' }}>
                           {new Date(sess.startedAt).toLocaleString(undefined, {
                             month: 'short',
                             day: 'numeric',
@@ -715,10 +947,10 @@ export default function Dashboard({
                             {sess.status === 'active' ? 'Open' : sess.status === 'paused' ? 'Paused' : 'Closed'}
                           </span>
                         </td>
-                        <td className="mono" style={{ fontWeight: 600 }}>
+                        <td className="tnum" style={{ fontWeight: 600 }}>
                           <span>{sess.attendeeCount}</span>
                           {sess.lateCount > 0 && (
-                            <span className="badge-late" style={{ marginLeft: 8 }}>
+                            <span className="late-inline" style={{ marginLeft: 8 }}>
                               {sess.lateCount} late
                             </span>
                           )}
@@ -731,7 +963,7 @@ export default function Dashboard({
                                 className="btn btn-primary btn-sm"
                                 onClick={() => onOpenProjector(sess.id)}
                               >
-                                <QrCode size={13} /> QR
+                                <QrCode size={14} strokeWidth={1.75} /> QR
                               </button>
                             )}
                             <button
@@ -739,22 +971,22 @@ export default function Dashboard({
                               className="btn btn-secondary btn-sm"
                               onClick={() => onOpenSessionDetail(sess.id)}
                             >
-                              <Eye size={13} /> Register
+                              <Eye size={14} strokeWidth={1.75} /> Register
                             </button>
                             <a
                               className="btn btn-secondary btn-sm"
                               href={api.getExportCsvUrl(sess.id)}
                               download
                             >
-                              <Download size={13} /> CSV
+                              <Download size={14} strokeWidth={1.75} /> CSV
                             </a>
                             <button
                               type="button"
                               className="btn btn-ghost icon-btn"
                               onClick={() => handleDeleteSession(sess)}
-                              title="Delete Session"
+                              title="Delete session"
                             >
-                              <Trash2 size={14} />
+                              <Trash2 size={15} strokeWidth={1.75} />
                             </button>
                           </div>
                         </td>
@@ -773,14 +1005,14 @@ export default function Dashboard({
         <div className="modal-backdrop" onClick={() => setShowCourseModal(false)}>
           <div className="modal modal-animate" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">{editingClassId ? 'Edit Course' : 'Add Course'}</h3>
+              <h3 className="modal-title">{editingClassId ? 'Edit course' : 'Add course'}</h3>
               <button type="button" className="btn btn-ghost icon-btn" onClick={() => setShowCourseModal(false)}>
-                <X size={16} />
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <form onSubmit={handleSaveCourse}>
               <div className="form-group">
-                <label className="form-label">Course Code *</label>
+                <label className="form-label">Course code *</label>
                 <input
                   className="input mono"
                   placeholder="CS 201"
@@ -791,7 +1023,7 @@ export default function Dashboard({
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Course Title *</label>
+                <label className="form-label">Course title *</label>
                 <input
                   className="input"
                   placeholder="Data Structures & Algorithms"
@@ -801,7 +1033,7 @@ export default function Dashboard({
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Room / Venue</label>
+                <label className="form-label">Room or venue</label>
                 <input
                   className="input"
                   placeholder="Lecture Hall B"
@@ -813,8 +1045,13 @@ export default function Dashboard({
                 <button type="button" className="btn btn-secondary" onClick={() => setShowCourseModal(false)}>
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  {editingClassId ? 'Save Changes' : 'Save Course'}
+                <button type="submit" className="btn btn-primary" disabled={savingCourse}>
+                  {savingCourse && <Loader2 size={15} strokeWidth={1.75} className="spin" />}
+                  {savingCourse
+                    ? 'Saving...'
+                    : editingClassId
+                    ? 'Save changes'
+                    : 'Save course'}
                 </button>
               </div>
             </form>
@@ -827,20 +1064,14 @@ export default function Dashboard({
         <div className="modal-backdrop" onClick={() => setStartTargetClass(null)}>
           <div className="modal modal-animate" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
             <div className="modal-header">
-              <h3 className="modal-title">Start QR Attendance</h3>
+              <h3 className="modal-title">Start live QR attendance</h3>
               <button type="button" className="btn btn-ghost icon-btn" onClick={() => setStartTargetClass(null)}>
-                <X size={16} />
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
 
-            <div className="alert alert-info" style={{ marginBottom: 16 }}>
-              <div>
-                <strong className="mono">{startTargetClass.code}</strong> — {startTargetClass.name}
-              </div>
-            </div>
-
             <form onSubmit={handleStartSession}>
-              {classes.length > 1 && (
+              {classes.length > 1 ? (
                 <div className="form-group">
                   <label className="form-label">Course</label>
                   <select
@@ -858,9 +1089,17 @@ export default function Dashboard({
                     ))}
                   </select>
                 </div>
+              ) : (
+                <div style={{ marginBottom: 14, fontSize: '0.88rem', color: 'var(--ink-secondary)' }}>
+                  <span className="course-code-text mono" style={{ marginRight: 8 }}>
+                    {startTargetClass.code}
+                  </span>
+                  {startTargetClass.name}
+                </div>
               )}
+
               <div className="form-group">
-                <label className="form-label">Session Label</label>
+                <label className="form-label">Session label</label>
                 <input
                   className="input"
                   value={sessionConfig.title}
@@ -870,7 +1109,7 @@ export default function Dashboard({
               </div>
 
               <div className="form-group">
-                <label className="form-label">Room / Venue</label>
+                <label className="form-label">Room or venue</label>
                 <input
                   className="input"
                   placeholder="Room 204"
@@ -880,7 +1119,7 @@ export default function Dashboard({
               </div>
 
               <div className="form-group">
-                <label className="form-label">QR Code Refresh Interval</label>
+                <label className="form-label">QR rotation interval</label>
                 <select
                   className="select"
                   value={sessionConfig.rotateIntervalSec}
@@ -893,12 +1132,12 @@ export default function Dashboard({
                   <option value={10}>Every 10 seconds</option>
                 </select>
                 <span className="form-hint">
-                  Screenshots and forwarded links expire automatically once the QR code rotates.
+                  Screenshots and forwarded links expire once the code rotates.
                 </span>
               </div>
 
               <div className="form-group">
-                <label className="form-label">Mark Late Arrivals After (Optional)</label>
+                <label className="form-label">Mark late arrivals after</label>
                 <select
                   className="select"
                   value={sessionConfig.lateAfterMinutes}
@@ -906,12 +1145,12 @@ export default function Dashboard({
                     setSessionConfig({ ...sessionConfig, lateAfterMinutes: e.target.value })
                   }
                 >
-                  <option value="">Disabled (all check-ins marked Present)</option>
-                  <option value="5">5 minutes after start</option>
-                  <option value="10">10 minutes after start</option>
-                  <option value="15">15 minutes after start</option>
-                  <option value="20">20 minutes after start</option>
-                  <option value="30">30 minutes after start</option>
+                  <option value="">Off (all check-ins marked Present)</option>
+                  <option value="5">5 minutes</option>
+                  <option value="10">10 minutes</option>
+                  <option value="15">15 minutes</option>
+                  <option value="20">20 minutes</option>
+                  <option value="30">30 minutes</option>
                 </select>
               </div>
 
@@ -925,10 +1164,10 @@ export default function Dashboard({
                     }
                   />
                   <span>
-                    <strong>One submission per phone</strong>
+                    <strong>One check-in per phone</strong>
                     <br />
                     <span className="form-hint">
-                      Blocks checking in a second time on the same phone for an absent student.
+                      Stops one device from checking in twice for an absent classmate.
                     </span>
                   </span>
                 </label>
@@ -936,19 +1175,21 @@ export default function Dashboard({
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                     <div>
-                      <div style={{ fontSize: '0.84rem', fontWeight: 600 }}>Classroom GPS Radius (Optional)</div>
-                      <div className="form-hint">Require students to be within 75m of the room (HTTPS).</div>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 600 }}>Classroom GPS radius</div>
+                      <div className="form-hint">Require check-in within 75m of this room (HTTPS).</div>
                     </div>
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"
                       onClick={captureClassroomGps}
                     >
-                      <Crosshair size={13} /> {sessionConfig.geoCoords ? 'Update GPS' : 'Set Location'}
+                      <Crosshair size={14} strokeWidth={1.75} /> {sessionConfig.geoCoords ? 'Update GPS' : 'Set location'}
                     </button>
                   </div>
                   {geoStatus && (
-                    <div style={{ fontSize: '0.78rem', color: 'var(--accent)', marginTop: 6 }}>{geoStatus}</div>
+                    <div className="tnum" style={{ fontSize: '0.78rem', color: 'var(--accent)', marginTop: 6 }}>
+                      {geoStatus}
+                    </div>
                   )}
                 </div>
               </div>
@@ -961,8 +1202,13 @@ export default function Dashboard({
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  <QrCode size={15} /> Display QR Code
+                <button type="submit" className="btn btn-primary" disabled={startingSession}>
+                  {startingSession ? (
+                    <Loader2 size={15} strokeWidth={1.75} className="spin" />
+                  ) : (
+                    <QrCode size={15} strokeWidth={1.75} />
+                  )}
+                  {startingSession ? 'Starting...' : 'Display QR code'}
                 </button>
               </div>
             </form>

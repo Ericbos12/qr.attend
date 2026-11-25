@@ -179,14 +179,19 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
       </div>
 
       {loading || !session ? (
-        <div className="panel" style={{ padding: 34, textAlign: 'center', color: 'var(--ink-muted)' }}>
-          Loading register...
+        <div className="panel" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <span className="skeleton" style={{ height: 22, width: '40%' }} />
+            <span className="skeleton" style={{ height: 64, width: '100%' }} />
+            <span className="skeleton" style={{ height: 42, width: '100%' }} />
+            <span className="skeleton" style={{ height: 42, width: '90%' }} />
+          </div>
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: 22 }}>
+          <div style={{ marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
-              <span className="course-code-label mono">{session.classCode}</span>
+              <span className="course-code-text mono">{session.classCode}</span>
               <span className="status-tag">
                 <span
                   className={`status-dot ${
@@ -196,11 +201,13 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
                 {session.status === 'active' ? 'Open' : session.status === 'paused' ? 'Paused' : 'Closed'}
               </span>
               {session.lateAfterMinutes && (
-                <span className="badge-late">Late after {session.lateAfterMinutes}m</span>
+                <span className="tnum" style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
+                  · Late after {session.lateAfterMinutes}m
+                </span>
               )}
             </div>
-            <h1 style={{ fontSize: '1.4rem', fontWeight: 700, letterSpacing: '-0.015em' }}>{session.title}</h1>
-            <p style={{ color: 'var(--ink-muted)', fontSize: '0.86rem', marginTop: 2 }}>
+            <h1 className="page-title">{session.title}</h1>
+            <p className="tnum" style={{ color: 'var(--ink-muted)', fontSize: '0.86rem', marginTop: 4 }}>
               {session.className} {session.room ? `· ${session.room}` : ''} · Started{' '}
               {new Date(session.startedAt).toLocaleString()}
             </p>
@@ -272,7 +279,7 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
                   <tbody>
                     {filtered.map((rec, idx) => (
                       <tr key={rec.id}>
-                        <td className="mono" style={{ color: 'var(--ink-muted)' }}>
+                        <td className="tnum" style={{ color: 'var(--ink-muted)' }}>
                           {filtered.length - idx}
                         </td>
                         <td className="mono" style={{ fontWeight: 600 }}>
@@ -281,33 +288,37 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
                         <td>
                           <div style={{ fontWeight: 500 }}>{rec.studentName}</div>
                           {rec.note && (
-                            <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>{rec.note}</div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>{rec.note}</div>
                           )}
                         </td>
                         <td>
                           <button
                             type="button"
-                            className={`badge-toggle ${rec.status === 'late' ? 'badge-late' : 'badge-present'}`}
+                            className={`status-toggle-btn ${rec.status === 'late' ? 'is-late' : 'is-present'}`}
                             onClick={() => handleToggleStatus(rec)}
-                            title="Click to toggle Present / Late"
+                            title="Click to switch Present / Late"
                           >
                             {rec.status === 'late' ? 'Late' : 'Present'}
                           </button>
                         </td>
-                        <td style={{ fontSize: '0.82rem', color: 'var(--ink-secondary)' }}>
-                          {rec.method === 'qr' ? 'QR Scan' : 'Manual'}
+                        <td style={{ fontSize: '0.84rem', color: 'var(--ink-secondary)' }}>
+                          {rec.method === 'qr' ? 'QR scan' : 'Manual'}
                         </td>
-                        <td className="mono" style={{ fontSize: '0.82rem', color: 'var(--ink-muted)' }}>
-                          {new Date(rec.checkedInAt).toLocaleTimeString()}
+                        <td className="tnum" style={{ fontSize: '0.84rem', color: 'var(--ink-muted)' }}>
+                          {new Date(rec.checkedInAt).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })}
                         </td>
                         <td className="no-print" style={{ textAlign: 'right' }}>
                           <button
                             type="button"
                             className="btn btn-ghost icon-btn"
                             onClick={() => handleRemoveRecord(rec)}
-                            title="Remove Record"
+                            title="Remove record"
                           >
-                            <Trash2 size={14} />
+                            <Trash2 size={15} strokeWidth={1.75} />
                           </button>
                         </td>
                       </tr>

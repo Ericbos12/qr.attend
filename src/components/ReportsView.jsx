@@ -70,12 +70,7 @@ export default function ReportsView({ classes = [] }) {
       {error && <div className="alert alert-error">{error}</div>}
 
       <div className="page-header">
-        <div>
-          <h1 className="page-title">Attendance Reports</h1>
-          <p className="page-sub">
-            Review course summaries, track late arrivals, and export consolidated attendance sheets.
-          </p>
-        </div>
+        <h1 className="page-title">Attendance reports</h1>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <a
@@ -83,14 +78,14 @@ export default function ReportsView({ classes = [] }) {
             href={api.getReportSummaryCsvUrl(filters)}
             download
           >
-            <Download size={14} /> Summary CSV
+            <Download size={15} strokeWidth={1.75} /> Summary CSV
           </a>
           <a
             className="btn btn-primary btn-sm"
             href={api.getReportRecordsCsvUrl(filters)}
             download
           >
-            <FileSpreadsheet size={14} /> Bulk Register CSV
+            <FileSpreadsheet size={15} strokeWidth={1.75} /> Export full register
           </a>
         </div>
       </div>
@@ -186,18 +181,23 @@ export default function ReportsView({ classes = [] }) {
       </div>
 
       {loading ? (
-        <div className="panel" style={{ padding: 34, textAlign: 'center', color: 'var(--ink-muted)' }}>
-          Loading report...
+        <div className="panel" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <span className="skeleton" style={{ height: 18, width: '32%' }} />
+            <span className="skeleton" style={{ height: 42, width: '100%' }} />
+            <span className="skeleton" style={{ height: 42, width: '100%' }} />
+            <span className="skeleton" style={{ height: 42, width: '92%' }} />
+          </div>
         </div>
       ) : (
         <>
           {/* Course Summary Table */}
           {report?.courses?.length > 0 && (
-            <div style={{ marginBottom: 26 }}>
+            <div style={{ marginBottom: 32 }}>
               <div className="section-header">
-                <h2 style={{ fontSize: '1rem', fontWeight: 700 }}>Course Breakdown</h2>
-                <span style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
-                  Avg {summary.avgPerSession} students / session
+                <h2 className="section-heading">By course</h2>
+                <span className="tnum" style={{ fontSize: '0.82rem', color: 'var(--ink-muted)' }}>
+                  {summary.avgPerSession} avg per session
                 </span>
               </div>
               <div className="panel">
@@ -207,37 +207,37 @@ export default function ReportsView({ classes = [] }) {
                       <tr>
                         <th>Course</th>
                         <th>Sessions</th>
-                        <th>Unique Students</th>
-                        <th>Total Check-Ins</th>
-                        <th>On Time</th>
+                        <th>Students</th>
+                        <th>Check-ins</th>
+                        <th>On time</th>
                         <th>Late</th>
-                        <th>Avg / Session</th>
+                        <th>Average</th>
                       </tr>
                     </thead>
                     <tbody>
                       {report.courses.map((c) => (
                         <tr key={c.classId}>
                           <td>
-                            <span className="course-code-label mono" style={{ marginRight: 8 }}>
+                            <span className="course-code-text mono" style={{ marginRight: 8 }}>
                               {c.code}
                             </span>
                             <span style={{ fontWeight: 600 }}>{c.name}</span>
                           </td>
-                          <td className="mono">{c.sessionCount}</td>
-                          <td className="mono">{c.uniqueStudents}</td>
-                          <td className="mono" style={{ fontWeight: 600 }}>
+                          <td className="tnum">{c.sessionCount}</td>
+                          <td className="tnum">{c.uniqueStudents}</td>
+                          <td className="tnum" style={{ fontWeight: 600 }}>
                             {c.totalCheckIns}
                           </td>
-                          <td className="mono" style={{ color: 'var(--ok)' }}>
+                          <td className="tnum" style={{ color: 'var(--ok)', fontWeight: 500 }}>
                             {c.presentCount}
                           </td>
                           <td
-                            className="mono"
+                            className="tnum"
                             style={{ color: c.lateCount > 0 ? 'var(--warn)' : 'var(--ink-muted)' }}
                           >
                             {c.lateCount}
                           </td>
-                          <td className="mono">{c.avgPerSession}</td>
+                          <td className="tnum">{c.avgPerSession}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -250,19 +250,20 @@ export default function ReportsView({ classes = [] }) {
           {/* Student Attendance Summary Table */}
           <div>
             <div className="section-header">
-              <h2 style={{ fontSize: '1rem', fontWeight: 700 }}>
-                Student Attendance Summary ({filteredStudents.length})
+              <h2 className="section-heading tnum">
+                Students ({filteredStudents.length})
               </h2>
               <div style={{ position: 'relative', width: 260 }}>
                 <Search
-                  size={14}
+                  size={15}
+                  strokeWidth={1.75}
                   color="var(--ink-muted)"
                   style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }}
                 />
                 <input
                   className="input"
                   style={{ paddingLeft: 32, paddingTop: 7, paddingBottom: 7, fontSize: '0.84rem' }}
-                  placeholder="Search student ID or name..."
+                  placeholder="Search ID or name..."
                   value={studentSearch}
                   onChange={(e) => setStudentSearch(e.target.value)}
                 />
@@ -298,35 +299,31 @@ export default function ReportsView({ classes = [] }) {
                           </td>
                           <td style={{ fontWeight: 500 }}>{st.studentName}</td>
                           <td>
-                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                              {st.courses.map((code) => (
-                                <span key={code} className="course-code-label mono">
-                                  {code}
-                                </span>
-                              ))}
-                            </div>
+                            <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--ink-secondary)' }}>
+                              {st.courses.join(', ')}
+                            </span>
                           </td>
-                          <td className="mono">
+                          <td className="tnum">
                             {st.sessionsAttended} / {st.totalSessions}
                           </td>
-                          <td style={{ minWidth: 110 }}>
+                          <td style={{ minWidth: 112 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div className="rate-track">
                                 <div className="rate-fill" style={{ width: `${st.attendanceRate}%` }} />
                               </div>
-                              <span className="mono" style={{ fontSize: '0.78rem', fontWeight: 600 }}>
+                              <span className="tnum" style={{ fontSize: '0.82rem', fontWeight: 600 }}>
                                 {st.attendanceRate}%
                               </span>
                             </div>
                           </td>
-                          <td className="mono" style={{ fontSize: '0.82rem' }}>
+                          <td className="tnum" style={{ fontSize: '0.84rem' }}>
                             <span style={{ color: 'var(--ok)', fontWeight: 600 }}>{st.presentCount}</span>
                             <span style={{ color: 'var(--ink-muted)' }}> / </span>
                             <span style={{ color: st.lateCount > 0 ? 'var(--warn)' : 'var(--ink-muted)', fontWeight: 600 }}>
                               {st.lateCount}
                             </span>
                           </td>
-                          <td style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
+                          <td className="tnum" style={{ fontSize: '0.82rem', color: 'var(--ink-muted)' }}>
                             {new Date(st.lastCheckedInAt).toLocaleString(undefined, {
                               month: 'short',
                               day: 'numeric',

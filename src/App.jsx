@@ -180,6 +180,7 @@ function AppContent() {
     pageContent = (
       <Dashboard
         viewMode={viewMode}
+        teacher={teacher}
         classes={classes}
         sessions={sessions}
         loading={loadingWorkspace}

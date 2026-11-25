@@ -10,6 +10,10 @@ import {
   verifyPassword,
   signAuthToken,
   verifyAuthToken,
+  getPasswordVersion,
+  safeEqualStrings,
+  sanitizeText,
+  sanitizeMultilineText,
   getSessionQrToken,
   validateSessionToken,
   parseCookies,
@@ -28,9 +32,29 @@ import {
 } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const PORT = Number(process.env.PORT) || 3001;
 const DEVICE_COOKIE_NAME = 'attendqr_dev';
 const OAUTH_STATE_COOKIE_NAME = 'attendqr_oauth_state';
+const ALLOWED_ORIGINS = new Set(
+  (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+);
+
+function getRequestOrigin(req) {
+  const rawProto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  const proto = rawProto === 'https' ? 'https' : 'http';
+  const rawHost = String(req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`)
+    .split(',')[0]
+    .trim();
+  const safeHost = /^[a-z0-9.-]+(:\d{1,5})?$/i.test(rawHost) ? rawHost : `localhost:${PORT}`;
+  return `${proto}://${safeHost}`;
+}
 
 function getGoogleOAuthConfig(req) {
   const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
@@ -38,9 +62,7 @@ function getGoogleOAuthConfig(req) {
   const configuredRedirect = (process.env.GOOGLE_REDIRECT_URI || '').trim();
   let redirectUri = configuredRedirect;
   if (!redirectUri && req) {
-    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
-    const host = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).split(',')[0].trim();
-    redirectUri = `${proto}://${host}/api/auth/google/callback`;
+    redirectUri = `${getRequestOrigin(req)}/api/auth/google/callback`;
   }
   return {
     enabled: Boolean(clientId && clientSecret),
@@ -53,18 +75,73 @@ function getGoogleOAuthConfig(req) {
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '100kb', strict: true }));
 
-// Production security headers
-app.use((_req, res, next) => {
+// Production security headers (CSP, HSTS, Clickjacking, MIME sniffing, Referrer & Permissions)
+const CSP_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+  "form-action 'self' https://accounts.google.com",
+].join('; ');
+
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', CSP_POLICY);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=()');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), payment=(), usb=(), geolocation=(self)');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  if (IS_PRODUCTION && isHttps) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store');
+  }
   next();
 });
 
-// Lightweight in-memory rate limiter for auth & public scan routes
+// Strict Same-Origin / Allowlist CORS & Cross-Origin Mutation Guard
+app.use('/api', (req, res, next) => {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin.trim().replace(/\/+$/, '') : '';
+  if (!origin) {
+    return next();
+  }
+
+  const sameOrigin = getRequestOrigin(req);
+  const isAllowed = origin === sameOrigin || ALLOWED_ORIGINS.has(origin);
+
+  if (isAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    return next();
+  }
+
+  if (req.method === 'OPTIONS' || ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
+    return res.status(403).json({ error: 'Cross-origin request blocked.' });
+  }
+  return next();
+});
+
+// Lightweight in-memory rate limiter
 function createRateLimiter({ windowMs, maxRequests, message }) {
   const buckets = new Map();
   return (req, res, next) => {
@@ -82,15 +159,23 @@ function createRateLimiter({ windowMs, maxRequests, message }) {
       }
     }
     if (entry.count > maxRequests) {
+      const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+      res.setHeader('Retry-After', String(retryAfterSec));
       return res.status(429).json({ error: message });
     }
     next();
   };
 }
 
+const apiRateLimit = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 240,
+  message: 'Too many requests. Please slow down and try again shortly.',
+});
+
 const authRateLimit = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  maxRequests: 40,
+  maxRequests: 25,
   message: 'Too many authentication attempts. Please wait a few minutes and try again.',
 });
 
@@ -100,11 +185,19 @@ const claimRateLimit = createRateLimiter({
   message: 'Too many scan requests from this network. Please wait a moment and retry.',
 });
 
+const checkinRateLimit = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 45,
+  message: 'Too many check-in attempts from this network. Please wait a moment and retry.',
+});
+
 const supportRateLimit = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   maxRequests: 10,
   message: 'Too many problem reports submitted recently. Please wait a few minutes before sending another.',
 });
+
+app.use('/api', apiRateLimit);
 
 // SSE listeners per sessionId
 const sseClients = new Map();
@@ -123,7 +216,11 @@ function broadcastSessionEvent(sessionId, eventName, data) {
 }
 
 function escapeCsv(val) {
-  const str = String(val ?? '');
+  let str = String(val ?? '');
+  // Prevent CSV / spreadsheet formula injection (=, +, -, @, tab, CR)
+  if (/^[\s]*[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
   if (/[",\n\r]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -131,9 +228,10 @@ function escapeCsv(val) {
 }
 
 function sendCsv(res, filename, rows) {
+  const safeFilename = String(filename || 'export.csv').replace(/[^a-zA-Z0-9._-]/g, '_');
   const csv = rows.map((row) => row.map(escapeCsv).join(',')).join('\r\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
   res.send('\uFEFF' + csv);
 }
 
@@ -141,23 +239,43 @@ function sendCsv(res, filename, rows) {
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
-// Auth middleware for Teacher Administrator routes
-const requireTeacher = asyncHandler(async (req, res, next) => {
-  const authHeader = req.headers.authorization || '';
-  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  const queryToken = req.query.auth || null;
-  const token = bearer || queryToken;
-  const payload = verifyAuthToken(token);
-  if (!payload?.teacherId) {
-    return res.status(401).json({ error: 'Session expired. Please sign in again.' });
-  }
-  const teacher = await store.findTeacherById(payload.teacherId);
-  if (!teacher) {
-    return res.status(401).json({ error: 'Account not found. Please sign in again.' });
-  }
-  req.teacher = teacher;
-  next();
-});
+function issueTeacherToken(teacher) {
+  return signAuthToken({
+    teacherId: teacher.id,
+    pwv: getPasswordVersion(teacher.passwordHash),
+  });
+}
+
+// Auth middleware factory for Teacher Administrator routes
+function createRequireTeacher({ allowQueryToken = false } = {}) {
+  return asyncHandler(async (req, res, next) => {
+    const authHeader = req.headers.authorization || '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    const queryToken =
+      allowQueryToken && typeof req.query.auth === 'string' ? req.query.auth.trim() : null;
+    const token = bearer || queryToken;
+    const payload = verifyAuthToken(token);
+    if (!payload?.teacherId || typeof payload.pwv !== 'string') {
+      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+    }
+    const teacher = await store.findTeacherById(payload.teacherId);
+    if (!teacher) {
+      return res.status(401).json({ error: 'Account not found. Please sign in again.' });
+    }
+    if ((teacher.role || 'admin') !== 'admin') {
+      return res.status(403).json({ error: 'Administrator access required.' });
+    }
+    const currentPwv = getPasswordVersion(teacher.passwordHash);
+    if (!safeEqualStrings(payload.pwv, currentPwv)) {
+      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+    }
+    req.teacher = teacher;
+    next();
+  });
+}
+
+const requireTeacher = createRequireTeacher({ allowQueryToken: false });
+const requireTeacherQueryAllowed = createRequireTeacher({ allowQueryToken: true });
 
 function sanitizeTeacher(teacher) {
   return {
@@ -203,11 +321,14 @@ function getOrAssignDeviceCookie(req, res) {
 
 // Health check (for cloud hosting platforms like Render / Railway / Fly.io)
 app.get('/api/health', (_req, res) => {
-  res.json({
+  const payload = {
     ok: true,
-    database: store.getDialect(),
     time: new Date().toISOString(),
-  });
+  };
+  if (!IS_PRODUCTION) {
+    payload.database = store.getDialect();
+  }
+  res.json(payload);
 });
 
 // ==========================================
@@ -218,16 +339,18 @@ app.post(
   authRateLimit,
   asyncHandler(async (req, res) => {
     const { name, email, password } = req.body || {};
-    const trimmedEmail = String(email || '').trim().toLowerCase();
+    const cleanName = sanitizeText(name, 100);
+    const trimmedEmail = sanitizeText(email, 254).toLowerCase();
     if (
-      !name?.trim() ||
+      !cleanName ||
       !trimmedEmail ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) ||
-      !password ||
-      password.length < 6
+      typeof password !== 'string' ||
+      password.length < 6 ||
+      password.length > 128
     ) {
       return res.status(400).json({
-        error: 'Please provide your name, a valid email address, and a password (minimum 6 characters).',
+        error: 'Please provide your name, a valid email address, and a password (6–128 characters).',
       });
     }
     if (await store.findTeacherByEmail(trimmedEmail)) {
@@ -237,7 +360,7 @@ app.post(
     }
 
     const pending = await store.createEmailVerification({
-      name,
+      name: cleanName,
       email: trimmedEmail,
       password,
     });
@@ -250,18 +373,24 @@ app.post(
         expiresInMinutes: 15,
       });
 
+      if (!delivery.delivered && IS_PRODUCTION) {
+        return res.status(503).json({
+          error: 'Email verification service is temporarily unavailable. Please try again shortly.',
+        });
+      }
+
       res.json({
         ok: true,
         email: pending.email,
         delivered: delivery.delivered,
         message: delivery.delivered
           ? `We sent a 6-digit verification code to ${pending.email}. Enter it below to complete sign up.`
-          : `Email delivery is not configured yet. Your 6-digit verification code was logged in the server terminal (add SMTP or RESEND_API_KEY in .env to send real emails).`,
+          : 'Email delivery is not configured locally. Your 6-digit verification code was logged in the development server terminal.',
       });
     } catch (err) {
-      console.error('[MAIL ERROR]', err);
+      console.error('[MAIL ERROR]', IS_PRODUCTION ? err?.message : err);
       return res.status(502).json({
-        error: 'Could not send the verification email. Please check your SMTP/Resend settings in .env and try again.',
+        error: 'Could not send the verification email. Please try again in a moment.',
       });
     }
   })
@@ -276,7 +405,7 @@ app.post(
     if (!result.ok) {
       return res.status(result.status || 400).json({ error: result.error });
     }
-    const token = signAuthToken({ teacherId: result.teacher.id });
+    const token = issueTeacherToken(result.teacher);
     res.status(201).json({ token, teacher: sanitizeTeacher(result.teacher) });
   })
 );
@@ -293,14 +422,15 @@ app.post(
   authRateLimit,
   asyncHandler(async (req, res) => {
     const { email, password } = req.body || {};
-    if (!email?.trim() || !password) {
+    const cleanEmail = sanitizeText(email, 254).toLowerCase();
+    if (!cleanEmail || typeof password !== 'string' || !password || password.length > 128) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
-    const teacher = await store.findTeacherByEmail(email);
+    const teacher = await store.findTeacherByEmail(cleanEmail);
     if (!teacher || !verifyPassword(password, teacher.passwordHash)) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
-    const token = signAuthToken({ teacherId: teacher.id });
+    const token = issueTeacherToken(teacher);
     res.json({ token, teacher: sanitizeTeacher(teacher) });
   })
 );
@@ -315,7 +445,7 @@ app.get('/api/auth/google', authRateLimit, (req, res) => {
   if (!google.enabled) {
     return res.redirect(
       `/#auth_error=${encodeURIComponent(
-        'Google Sign-In is not configured yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file and restart the server.'
+        'Google Sign-In is currently unavailable. Please sign in with your email and password.'
       )}`
     );
   }
@@ -401,7 +531,7 @@ app.get(
 
     if (
       !stateData ||
-      stateData.state !== state ||
+      !safeEqualStrings(stateData.state, state) ||
       !stateData.codeVerifier ||
       Date.now() > Number(stateData.exp || 0)
     ) {
@@ -468,7 +598,7 @@ app.get(
       });
     }
 
-    const token = signAuthToken({ teacherId: teacher.id });
+    const token = issueTeacherToken(teacher);
     res.redirect(`/#google_auth=${encodeURIComponent(token)}`);
   })
 );
@@ -479,24 +609,34 @@ app.get('/api/auth/me', requireTeacher, (req, res) => {
 
 app.post(
   '/api/auth/change-password',
+  authRateLimit,
   requireTeacher,
   asyncHandler(async (req, res) => {
     const { currentPassword, newPassword } = req.body || {};
-    if (!currentPassword || !newPassword || newPassword.length < 6) {
+    if (
+      typeof currentPassword !== 'string' ||
+      typeof newPassword !== 'string' ||
+      !currentPassword ||
+      newPassword.length < 6 ||
+      newPassword.length > 128
+    ) {
       return res.status(400).json({
-        error: 'Current password and a new password (minimum 6 characters) are required.',
+        error: 'Current password and a new password (6–128 characters) are required.',
       });
     }
     if (!verifyPassword(currentPassword, req.teacher.passwordHash)) {
       return res.status(401).json({ error: 'Current password is incorrect.' });
     }
     await store.updateTeacherPassword(req.teacher.id, newPassword);
-    res.json({ ok: true, message: 'Password updated successfully.' });
+    const refreshed = await store.findTeacherById(req.teacher.id);
+    const token = refreshed ? issueTeacherToken(refreshed) : null;
+    res.json({ ok: true, token, message: 'Password updated successfully.' });
   })
 );
 
 app.delete(
   '/api/auth/account',
+  authRateLimit,
   requireTeacher,
   asyncHandler(async (req, res) => {
     const { confirmation } = req.body || {};
@@ -516,8 +656,9 @@ app.post(
   supportRateLimit,
   asyncHandler(async (req, res) => {
     const { category = 'Bug / Error', subject = '', message = '' } = req.body || {};
-    const cleanSubject = String(subject).trim();
-    const cleanMessage = String(message).trim();
+    const cleanCategory = sanitizeText(category, 60) || 'General';
+    const cleanSubject = sanitizeText(subject, 160);
+    const cleanMessage = sanitizeMultilineText(message, 4000);
     if (!cleanSubject || cleanSubject.length < 3) {
       return res.status(400).json({ error: 'Please enter a brief subject for your report.' });
     }
@@ -529,7 +670,7 @@ app.post(
       teacherId: req.teacher.id,
       senderName: req.teacher.name,
       senderEmail: req.teacher.email,
-      category,
+      category: cleanCategory,
       subject: cleanSubject,
       message: cleanMessage,
     });
@@ -544,7 +685,7 @@ app.post(
         message: report.message,
       });
     } catch (err) {
-      console.error('[SUPPORT MAIL ERROR]', err);
+      console.error('[SUPPORT MAIL ERROR]', IS_PRODUCTION ? err?.message : err);
       return res.status(502).json({
         error: 'Your report was saved, but email delivery failed temporarily. Please try again shortly.',
       });
@@ -563,10 +704,11 @@ app.post(
   authRateLimit,
   asyncHandler(async (req, res) => {
     const { email } = req.body || {};
-    if (!email?.trim()) {
+    const cleanEmail = sanitizeText(email, 254).toLowerCase();
+    if (!cleanEmail) {
       return res.status(400).json({ error: 'Please enter your account email address.' });
     }
-    const teacher = await store.findTeacherByEmail(email);
+    const teacher = await store.findTeacherByEmail(cleanEmail);
     if (teacher) {
       const { code, expiresAt } = await store.createPasswordResetToken(teacher.id);
       try {
@@ -577,16 +719,19 @@ app.post(
           expiresAt,
         });
       } catch (err) {
-        console.error('[PASSWORD RESET MAIL ERROR]', err);
-        console.log(`\n[PASSWORD RESET] Account: ${teacher.email} | Code: ${code} | Expires: ${expiresAt}\n`);
+        console.error('[PASSWORD RESET MAIL ERROR]', IS_PRODUCTION ? err?.message : err);
+        if (!IS_PRODUCTION) {
+          console.log(`\n[PASSWORD RESET] Account: ${teacher.email} | Code: ${code} | Expires: ${expiresAt}\n`);
+        }
       }
     }
     // Always return the same response so account existence cannot be enumerated
     res.json({
       ok: true,
-      message: isEmailConfigured()
-        ? 'If an account matches that email, a 15-minute reset code has been sent to your inbox.'
-        : 'If an account matches that email, a 15-minute reset code has been generated in the server log.',
+      message:
+        isEmailConfigured() || IS_PRODUCTION
+          ? 'If an account matches that email, a 15-minute reset code has been sent to your inbox.'
+          : 'If an account matches that email, a 15-minute reset code has been generated in the development server log.',
     });
   })
 );
@@ -596,12 +741,20 @@ app.post(
   authRateLimit,
   asyncHandler(async (req, res) => {
     const { email, code, newPassword } = req.body || {};
-    if (!email?.trim() || !code?.trim() || !newPassword || newPassword.length < 6) {
+    const cleanEmail = sanitizeText(email, 254).toLowerCase();
+    const cleanCode = sanitizeText(code, 32);
+    if (
+      !cleanEmail ||
+      !cleanCode ||
+      typeof newPassword !== 'string' ||
+      newPassword.length < 6 ||
+      newPassword.length > 128
+    ) {
       return res.status(400).json({
-        error: 'Email, reset code, and a new password (minimum 6 characters) are required.',
+        error: 'Email, reset code, and a new password (6–128 characters) are required.',
       });
     }
-    const result = await store.consumePasswordResetToken(email, code, newPassword);
+    const result = await store.consumePasswordResetToken(cleanEmail, cleanCode, newPassword);
     if (!result.ok) {
       return res.status(400).json({ error: result.error });
     }
@@ -721,7 +874,7 @@ app.get(
     }
     const records = (await store.getRecordsBySession(session.id)).map(sanitizeRecord);
     const qr = getSessionQrToken(session);
-    const lanIp = getLocalLanIp();
+    const lanIp = IS_PRODUCTION ? null : getLocalLanIp();
     const lanOrigin = lanIp ? `http://${lanIp}:${PORT}` : null;
     res.json({
       session: await sanitizeSession(session),
@@ -741,7 +894,7 @@ app.get(
       return res.status(404).json({ error: 'Session not found.' });
     }
     const qr = getSessionQrToken(session);
-    const lanIp = getLocalLanIp();
+    const lanIp = IS_PRODUCTION ? null : getLocalLanIp();
     const lanOrigin = lanIp ? `http://${lanIp}:${PORT}` : null;
     res.json({
       status: session.status,
@@ -782,7 +935,7 @@ app.delete(
 // Live SSE stream for real-time attendance feed
 app.get(
   '/api/sessions/:id/stream',
-  requireTeacher,
+  requireTeacherQueryAllowed,
   asyncHandler(async (req, res) => {
     const session = await store.getSessionById(req.params.id);
     if (!session || session.teacherId !== req.teacher.id) {
@@ -888,7 +1041,7 @@ app.delete(
 // Export CSV for a single session
 app.get(
   '/api/sessions/:id/export.csv',
-  requireTeacher,
+  requireTeacherQueryAllowed,
   asyncHandler(async (req, res) => {
     const session = await store.getSessionById(req.params.id);
     if (!session || session.teacherId !== req.teacher.id) {
@@ -952,7 +1105,7 @@ app.get(
 
 app.get(
   '/api/reports/summary.csv',
-  requireTeacher,
+  requireTeacherQueryAllowed,
   asyncHandler(async (req, res) => {
     const { classId = null, from = null, to = null } = req.query;
     const report = await store.getAttendanceReport(req.teacher.id, {
@@ -997,7 +1150,7 @@ app.get(
 
 app.get(
   '/api/reports/records.csv',
-  requireTeacher,
+  requireTeacherQueryAllowed,
   asyncHandler(async (req, res) => {
     const { classId = null, from = null, to = null } = req.query;
     const report = await store.getAttendanceReport(req.teacher.id, {
@@ -1127,10 +1280,13 @@ app.post(
 
 app.post(
   '/api/public/checkin',
+  checkinRateLimit,
   asyncHandler(async (req, res) => {
     const { ticketId, studentId, studentName, deviceId, coords } = req.body || {};
+    const cleanStudentId = sanitizeText(studentId, 40);
+    const cleanStudentName = sanitizeText(studentName, 100);
 
-    if (!studentId?.trim() || !studentName?.trim()) {
+    if (!cleanStudentId || !cleanStudentName) {
       return res.status(400).json({ error: 'Please enter both your Student ID and Full Name.' });
     }
 
@@ -1164,7 +1320,15 @@ app.post(
     if (session.geoLock) {
       const lat = Number(coords?.lat);
       const lng = Number(coords?.lng);
-      if (!coords || Number.isNaN(lat) || Number.isNaN(lng)) {
+      if (
+        !coords ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng) ||
+        lat < -90 ||
+        lat > 90 ||
+        lng < -180 ||
+        lng > 180
+      ) {
         return res.status(403).json({
           error:
             'Location verification is required for this session. Allow location access in your browser and retry.',
@@ -1240,16 +1404,33 @@ app.post(
 // ==========================================
 const distDir = path.resolve(__dirname, '../dist');
 if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
+  app.use(
+    express.static(distDir, {
+      dotfiles: 'deny',
+      etag: true,
+      maxAge: IS_PRODUCTION ? '1h' : 0,
+    })
+  );
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
     res.sendFile(path.join(distDir, 'index.html'));
   });
 }
 
-// Global JSON error handler
+// Clean 404 JSON for unknown API routes
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'API endpoint not found.' });
+});
+
+// Global JSON error handler (never expose stack traces or internals)
 app.use((err, _req, res, _next) => {
-  console.error('[SERVER ERROR]', err);
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON request body.' });
+  }
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request payload is too large.' });
+  }
+  console.error('[SERVER ERROR]', IS_PRODUCTION ? err?.message : err);
   res.status(500).json({ error: 'An unexpected server error occurred.' });
 });
 

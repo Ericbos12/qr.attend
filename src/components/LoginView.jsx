@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 import { api, setAuthToken } from '../api';
-import BrandLogo from './BrandLogo';
+import { BrandMark } from './BrandLogo';
 import PrivacyPolicyModal from './PrivacyPolicyModal';
 
 function GoogleIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+    <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
       <path
         fill="#4285F4"
         d="M23.49 12.27c0-.79-.07-1.55-.2-2.27H12v4.3h6.45a5.52 5.52 0 0 1-2.39 3.62v3.01h3.87c2.26-2.08 3.56-5.15 3.56-8.66z"
@@ -71,12 +71,18 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     };
   }, []);
 
+  function switchMode(nextMode) {
+    setMode(nextMode);
+    setError('');
+    setInfo('');
+  }
+
   function handleGoogleContinue() {
     setError('');
     setInfo('');
     if (googleEnabled === false) {
       setError(
-        'Google Sign-In is not configured yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file and restart the server.'
+        'Google Sign-In is currently unavailable. Please sign in with your email and password.'
       );
       return;
     }
@@ -173,416 +179,318 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     }
   }
 
-  const isResetFlow = mode === 'forgot' || mode === 'reset';
   const isVerifySignup = mode === 'verify-signup';
-  const showAuthTabs = !isResetFlow && !isVerifySignup;
+
+  const title =
+    mode === 'forgot'
+      ? 'Reset your password'
+      : mode === 'reset'
+      ? 'Set a new password'
+      : isVerifySignup
+      ? 'Verify your email'
+      : mode === 'register'
+      ? 'Create your account'
+      : 'Sign in to AttendQR';
 
   return (
-    <div className="auth-split">
-      {/* Left Institutional Panel */}
-      <aside className="auth-aside">
-        <div>
-          <BrandLogo size={36} dark />
-        </div>
+    <div className="auth-stage">
+      {/* Layered comfortable classroom-inspired background */}
+      <div className="auth-bg-layer auth-bg-layer-base" aria-hidden="true" />
+      <div className="auth-bg-layer auth-bg-layer-wash-a" aria-hidden="true" />
+      <div className="auth-bg-layer auth-bg-layer-wash-b" aria-hidden="true" />
+      <div className="auth-bg-layer auth-bg-layer-grid" aria-hidden="true" />
 
-        <div style={{ maxWidth: 420 }}>
-          <div
-            className="mono"
-            style={{
-              fontSize: '0.74rem',
-              textTransform: 'uppercase',
-              letterSpacing: '0.09em',
-              color: '#bfdbfe',
-              marginBottom: 14,
-            }}
-          >
-            <h2>Classroom Attendance System</h2>
-          </div>
-          <h1 style={{ fontSize: '2rem', fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.02em', marginBottom: 18 }}>
-            Live QR roll call for lectures and labs.
-          </h1>
-          <p style={{ fontSize: '0.93rem', color: '#dbeafe', lineHeight: 1.6, marginBottom: 28 }}>
-            {mode === 'register'
-              ? 'Sign up to project a rotating QR code during class. Students scan directly from their seats and enter their Student ID and full name.'
-              : 'Sign in to project a rotating QR code during class. Students scan directly from their seats and enter their Student ID and full name.'}
-          </p>
-
-          <div
-            style={{
-              borderTop: '1px solid rgba(255,255,255,0.2)',
-              paddingTop: 20,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-              fontSize: '0.84rem',
-              color: '#eff6ff',
-            }}
-          >
-            <div>• Rotating QR codes invalidate screenshots automatically</div>
-            <div>• Single-use device tickets stop forwarded links from working</div>
-            <div>• Automatic late tracking, reports, and bulk CSV export</div>
-          </div>
-        </div>
-
-        <div style={{ fontSize: '0.78rem', color: '#bfdbfe' }}>
-          {mode === 'register'
-            ? 'Students do not need to sign up — scan the live QR code displayed by your instructor.'
-            : 'Students do not sign in here — scan the live QR code displayed by your instructor.'}
-        </div>
-      </aside>
-
-      {/* Right Sign-In / Sign-Up Panel */}
-      <main className="auth-main">
-        <div className="auth-box">
-          <div style={{ marginBottom: 24 }}>
-            <div style={{ marginBottom: 14 }}>
-              <BrandLogo size={30} />
+      <main className="auth-center">
+        {/* Concentric outer bezel: R_outer = 38px, padding = 8px -> R_card = 30px */}
+        <div className="auth-shell">
+          {/* Concentric card: R_card = 30px, padding = 20px -> R_inner = 10px */}
+          <div className="auth-card">
+            <div className="auth-brand-head auth-fly-1">
+              <div className="auth-qr-badge">
+                <BrandMark size={40} />
+              </div>
+              <h1 className="auth-heading">{title}</h1>
             </div>
-            <div style={{ fontSize: '1.35rem', fontWeight: 700, letterSpacing: '-0.015em' }}>
-              {isResetFlow
-                ? 'Reset Password'
-                : isVerifySignup
-                ? 'Confirm Your Email'
-                : 'Instructor Portal'}
-            </div>
-            <p style={{ fontSize: '0.86rem', color: 'var(--ink-muted)', marginTop: 3 }}>
-              {mode === 'forgot'
-                ? 'Request a 15-minute reset code for your instructor account.'
-                : mode === 'reset'
-                ? 'Enter the reset code from your email or server log and choose a new password.'
-                : isVerifySignup
-                ? `Enter the 6-digit confirmation code sent to ${email}.`
-                : mode === 'register'
-                ? 'Sign up to manage courses and display attendance QR codes.'
-                : 'Sign in to manage courses and display attendance QR codes.'}
-            </p>
-          </div>
 
-          {showAuthTabs && (
-            <div className="auth-tabs">
-              <button
-                type="button"
-                className={`auth-tab ${mode === 'login' ? 'active' : ''}`}
-                onClick={() => {
-                  setMode('login');
-                  setError('');
-                  setInfo('');
-                }}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                className={`auth-tab ${mode === 'register' ? 'active' : ''}`}
-                onClick={() => {
-                  setMode('register');
-                  setError('');
-                  setInfo('');
-                }}
-              >
-                Create Account
-              </button>
-            </div>
-          )}
+            {info && <div className="alert alert-info auth-concentric-inner">{info}</div>}
+            {error && <div className="alert alert-error auth-concentric-inner">{error}</div>}
 
-          {info && <div className="alert alert-info">{info}</div>}
-          {error && <div className="alert alert-error">{error}</div>}
-
-          {isVerifySignup ? (
-            <form onSubmit={handleVerifySignup}>
-              <div className="form-group">
-                <label className="form-label">6-Digit Verification Code</label>
-                <input
-                  className="input mono"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  placeholder="000000"
-                  value={signupCode}
-                  onChange={(e) => setSignupCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  style={{
-                    textAlign: 'center',
-                    fontSize: '1.35rem',
-                    fontWeight: 700,
-                    letterSpacing: '0.32em',
-                    padding: '12px 14px',
-                  }}
-                  required
-                  autoFocus
-                />
-                <span className="form-hint">Check your inbox (and spam folder) for your 6-digit code.</span>
-              </div>
-
-              <button
-                className="btn btn-primary btn-full btn-lg"
-                type="submit"
-                disabled={loading || signupCode.length !== 6}
-                style={{ marginTop: 6 }}
-              >
-                {loading ? 'Verifying...' : 'Verify & Create Account'}
-                <ArrowRight size={16} />
-              </button>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14 }}>
-                <button
-                  type="button"
-                  className="text-link-btn"
-                  onClick={() => {
-                    setMode('register');
-                    setError('');
-                    setInfo('');
-                  }}
-                >
-                  <ArrowLeft size={13} /> Edit details
-                </button>
-                <button
-                  type="button"
-                  className="text-link-btn"
-                  onClick={handleResendSignupCode}
-                  disabled={resendCooldown > 0 || loading}
-                  style={{ opacity: resendCooldown > 0 ? 0.6 : 1 }}
-                >
-                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
-                </button>
-              </div>
-            </form>
-          ) : mode === 'forgot' ? (
-            <form onSubmit={handleRequestReset}>
-              <div className="form-group">
-                <label className="form-label">Email Address</label>
-                <input
-                  className="input"
-                  type="email"
-                  placeholder="Email Address"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <button
-                className="btn btn-primary btn-full btn-lg"
-                type="submit"
-                disabled={loading}
-                style={{ marginTop: 6 }}
-              >
-                {loading ? 'Generating code...' : 'Request Reset Code'}
-                <ArrowRight size={16} />
-              </button>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14 }}>
-                <button
-                  type="button"
-                  className="text-link-btn"
-                  onClick={() => {
-                    setMode('login');
-                    setError('');
-                    setInfo('');
-                  }}
-                >
-                  <ArrowLeft size={13} /> Back to Sign In
-                </button>
-                <button
-                  type="button"
-                  className="text-link-btn"
-                  onClick={() => {
-                    setMode('reset');
-                    setError('');
-                  }}
-                >
-                  Already have a code?
-                </button>
-              </div>
-            </form>
-          ) : mode === 'reset' ? (
-            <form onSubmit={handleConfirmReset}>
-              <div className="form-group">
-                <label className="form-label">Email Address</label>
-                <input
-                  className="input"
-                  type="email"
-                  placeholder="name@institution.edu"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Reset Code</label>
-                <input
-                  className="input mono"
-                  placeholder="XXXX-XXXX-XXXX"
-                  value={resetCode}
-                  onChange={(e) => setResetCode(e.target.value)}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">New Password</label>
-                <div className="password-field">
-                  <input
-                    className="input"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Minimum 6 characters"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    minLength={6}
-                  />
-                  <button
-                    type="button"
-                    className="password-toggle"
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    title={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                className="btn btn-primary btn-full btn-lg"
-                type="submit"
-                disabled={loading}
-                style={{ marginTop: 6 }}
-              >
-                {loading ? 'Resetting...' : 'Set New Password'}
-                <ArrowRight size={16} />
-              </button>
-
-              <div style={{ marginTop: 14 }}>
-                <button
-                  type="button"
-                  className="text-link-btn"
-                  onClick={() => {
-                    setMode('login');
-                    setError('');
-                    setInfo('');
-                  }}
-                >
-                  <ArrowLeft size={13} /> Back to Sign In
-                </button>
-              </div>
-            </form>
-          ) : (
-            <div>
-              <form onSubmit={handleAuthSubmit}>
-                {mode === 'register' && (
-                  <div className="form-group">
-                    <label className="form-label">Full Name</label>
+            <div className="auth-mode-body" key={mode}>
+              {isVerifySignup ? (
+                <form onSubmit={handleVerifySignup}>
+                  <div className="form-group auth-fly-2">
+                    <label className="form-label">6-digit code sent to {email}</label>
                     <input
-                      className="input"
+                      className="input mono auth-concentric-inner"
                       type="text"
-                      placeholder="Dr. Sarah Mensah"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      placeholder="000000"
+                      value={signupCode}
+                      onChange={(e) => setSignupCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      style={{
+                        textAlign: 'center',
+                        fontSize: '1.35rem',
+                        fontWeight: 600,
+                        letterSpacing: '0.32em',
+                        padding: '12px 14px',
+                      }}
+                      required
+                      autoFocus
+                    />
+                  </div>
+
+                  <button
+                    className="btn btn-primary btn-full btn-lg auth-cta auth-concentric-inner auth-fly-3"
+                    type="submit"
+                    disabled={loading || signupCode.length !== 6}
+                  >
+                    {loading ? 'Verifying...' : 'Verify & continue'}
+                    <ArrowRight size={15} />
+                  </button>
+
+                  <div className="auth-inline-links auth-fly-4">
+                    <button type="button" className="text-link-btn" onClick={() => switchMode('register')}>
+                      <ArrowLeft size={13} /> Edit details
+                    </button>
+                    <button
+                      type="button"
+                      className="text-link-btn"
+                      onClick={handleResendSignupCode}
+                      disabled={resendCooldown > 0 || loading}
+                      style={{ opacity: resendCooldown > 0 ? 0.6 : 1 }}
+                    >
+                      {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+                    </button>
+                  </div>
+                </form>
+              ) : mode === 'forgot' ? (
+                <form onSubmit={handleRequestReset}>
+                  <div className="form-group auth-fly-2">
+                    <label className="form-label">Email address</label>
+                    <input
+                      className="input auth-concentric-inner"
+                      type="email"
+                      placeholder="you@university.edu"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      autoFocus
+                    />
+                  </div>
+
+                  <button
+                    className="btn btn-primary btn-full btn-lg auth-cta auth-concentric-inner auth-fly-3"
+                    type="submit"
+                    disabled={loading}
+                  >
+                    {loading ? 'Sending code...' : 'Send reset code'}
+                    <ArrowRight size={15} />
+                  </button>
+
+                  <div className="auth-inline-links auth-fly-4">
+                    <button type="button" className="text-link-btn" onClick={() => switchMode('login')}>
+                      <ArrowLeft size={13} /> Back to sign in
+                    </button>
+                    <button type="button" className="text-link-btn" onClick={() => switchMode('reset')}>
+                      Have a code?
+                    </button>
+                  </div>
+                </form>
+              ) : mode === 'reset' ? (
+                <form onSubmit={handleConfirmReset}>
+                  <div className="form-group auth-fly-2">
+                    <label className="form-label">Email address</label>
+                    <input
+                      className="input auth-concentric-inner"
+                      type="email"
+                      placeholder="you@university.edu"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
                       required
                     />
                   </div>
-                )}
 
-                <div className="form-group">
-                  <label className="form-label">Email Address</label>
-                  <input
-                    className="input"
-                    type="email"
-                    placeholder="name@institution.edu"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                  />
-                </div>
+                  <div className="form-group auth-fly-2">
+                    <label className="form-label">Reset code</label>
+                    <input
+                      className="input mono auth-concentric-inner"
+                      placeholder="XXXX-XXXX-XXXX"
+                      value={resetCode}
+                      onChange={(e) => setResetCode(e.target.value)}
+                      required
+                      autoFocus
+                    />
+                  </div>
 
-                <div className="form-group">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label className="form-label">Password</label>
-                    {mode === 'login' && (
+                  <div className="form-group auth-fly-3">
+                    <label className="form-label">New password</label>
+                    <div className="password-field">
+                      <input
+                        className="input auth-concentric-inner"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="At least 6 characters"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        minLength={6}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn btn-primary btn-full btn-lg auth-cta auth-concentric-inner auth-fly-3"
+                    type="submit"
+                    disabled={loading}
+                  >
+                    {loading ? 'Updating password...' : 'Update password'}
+                    <ArrowRight size={15} />
+                  </button>
+
+                  <div className="auth-inline-links auth-fly-4">
+                    <button type="button" className="text-link-btn" onClick={() => switchMode('login')}>
+                      <ArrowLeft size={13} /> Back to sign in
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleAuthSubmit}>
+                  {mode === 'register' && (
+                    <div className="form-group auth-fly-2">
+                      <label className="form-label">Full name</label>
+                      <input
+                        className="input auth-concentric-inner"
+                        type="text"
+                        placeholder="Dr. Sarah Mensah"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <div className="form-group auth-fly-2">
+                    <label className="form-label">Email address</label>
+                    <input
+                      className="input auth-concentric-inner"
+                      type="email"
+                      placeholder="you@university.edu"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group auth-fly-3">
+                    <div className="auth-label-row">
+                      <label className="form-label">Password</label>
+                      {mode === 'login' && (
+                        <button
+                          type="button"
+                          className="text-link-btn"
+                          style={{ fontSize: '0.79rem', fontWeight: 500 }}
+                          onClick={() => switchMode('forgot')}
+                        >
+                          Forgot password?
+                        </button>
+                      )}
+                    </div>
+                    <div className="password-field">
+                      <input
+                        className="input auth-concentric-inner"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder={mode === 'register' ? 'At least 6 characters' : 'Enter your password'}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        minLength={6}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Single primary CTA */}
+                  <button
+                    className="btn btn-primary btn-full btn-lg auth-cta auth-concentric-inner auth-fly-3"
+                    type="submit"
+                    disabled={loading}
+                  >
+                    {loading
+                      ? mode === 'login'
+                        ? 'Signing in...'
+                        : 'Sending code...'
+                      : mode === 'login'
+                      ? 'Sign in'
+                      : 'Create account'}
+                    <ArrowRight size={15} />
+                  </button>
+
+                  <div className="auth-secondary-row auth-fly-4">
+                    <button
+                      type="button"
+                      className="auth-quiet-google"
+                      onClick={handleGoogleContinue}
+                      disabled={loading}
+                    >
+                      <GoogleIcon />
+                      <span>Continue with Google</span>
+                    </button>
+
+                    <span className="auth-dot-sep" aria-hidden="true">·</span>
+
+                    {mode === 'login' ? (
                       <button
                         type="button"
                         className="text-link-btn"
-                        onClick={() => {
-                          setMode('forgot');
-                          setError('');
-                          setInfo('');
-                        }}
+                        style={{ fontSize: '0.82rem', fontWeight: 500 }}
+                        onClick={() => switchMode('register')}
                       >
-                        Forgot password?
+                        Create account
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-link-btn"
+                        style={{ fontSize: '0.82rem', fontWeight: 500 }}
+                        onClick={() => switchMode('login')}
+                      >
+                        Sign in instead
                       </button>
                     )}
                   </div>
-                  <div className="password-field">
-                    <input
-                      className="input"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder={mode === 'register' ? 'Minimum 6 characters' : 'Enter password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      minLength={6}
-                    />
+
+                  <p className="auth-legal auth-fly-4">
+                    By continuing, you agree to our{' '}
                     <button
                       type="button"
-                      className="password-toggle"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                      title={showPassword ? 'Hide password' : 'Show password'}
+                      className="text-link-btn"
+                      style={{ fontSize: 'inherit', fontWeight: 500, verticalAlign: 'baseline' }}
+                      onClick={() => setShowPrivacy(true)}
                     >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      Privacy Policy
                     </button>
-                  </div>
-                </div>
-
-                <button
-                  className="btn btn-primary btn-full btn-lg"
-                  type="submit"
-                  disabled={loading}
-                  style={{ marginTop: 6 }}
-                >
-                  {loading
-                    ? mode === 'login'
-                      ? 'Signing in...'
-                      : 'Sending code...'
-                    : mode === 'login'
-                    ? 'Sign In'
-                    : 'Continue & Send Code'}
-                  <ArrowRight size={16} />
-                </button>
-              </form>
-
-              <div className="auth-divider">
-                <span>or</span>
-              </div>
-
-              <button
-                type="button"
-                className="btn btn-google btn-full btn-lg"
-                onClick={handleGoogleContinue}
-                disabled={loading}
-              >
-                <GoogleIcon />
-                <span>Continue with Google</span>
-              </button>
-
-              <p className="auth-legal">
-                By {mode === 'register' ? 'creating an account' : 'signing in'}, you agree to our{' '}
-                <button
-                  type="button"
-                  className="text-link-btn"
-                  style={{ fontSize: 'inherit', verticalAlign: 'baseline' }}
-                  onClick={() => setShowPrivacy(true)}
-                >
-                  Privacy Policy
-                </button>
-                .
-              </p>
+                    .
+                  </p>
+                </form>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </main>
 

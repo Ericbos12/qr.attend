@@ -25,15 +25,12 @@ export function getLocalLanIp() {
 }
 
 /**
- * Extracts normalized client IP address from an Express request (proxy-aware for hosted deployments).
+ * Extracts normalized client IP address from an Express request.
+ * Relies on Express's req.ip (with `trust proxy = 1`) so untrusted clients
+ * cannot spoof X-Forwarded-For headers to bypass IP rate limiting.
  */
 export function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  const raw =
-    typeof forwarded === 'string' && forwarded.trim()
-      ? forwarded.split(',')[0].trim()
-      : req.socket?.remoteAddress || req.ip || '';
-
+  const raw = String(req.ip || req.socket?.remoteAddress || '').trim();
   if (raw.startsWith('::ffff:')) {
     return raw.slice(7);
   }

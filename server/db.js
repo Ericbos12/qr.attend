@@ -108,7 +108,7 @@ class SqliteAdapter {
   async init() {
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     const { DatabaseSync } = await import('node:sqlite');
     this.conn = new DatabaseSync(this.dbPath);
@@ -172,11 +172,14 @@ class PostgresAdapter {
     const Pool = pgMod.default?.Pool || pgMod.Pool;
     const isLocalhost = /localhost|127\.0\.0\.1/i.test(this.connectionString);
     const disableSsl = process.env.DATABASE_SSL === 'false' || isLocalhost;
+    const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
 
     this.pool = new Pool({
       connectionString: this.connectionString,
-      ssl: disableSsl ? false : { rejectUnauthorized: false },
+      ssl: disableSsl ? false : { rejectUnauthorized },
       max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
     });
 
     for (const stmt of SCHEMA_STATEMENTS) {

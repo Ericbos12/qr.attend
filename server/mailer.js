@@ -32,24 +32,42 @@ export function isEmailConfigured() {
   return hasResend || hasSmtp;
 }
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+function stripHeaderNewlines(val) {
+  return String(val ?? '').replace(/[\r\n]+/g, ' ').trim();
+}
+
+function escapeHtml(val) {
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 async function sendEmail({ to, subject, text, html, replyTo = '' }) {
+  const cleanTo = stripHeaderNewlines(to);
+  const cleanSubject = stripHeaderNewlines(subject);
+  const cleanReplyTo = stripHeaderNewlines(replyTo);
   const resendKey = (process.env.RESEND_API_KEY || '').trim();
   const defaultFrom =
-    (process.env.MAIL_FROM || '').trim() ||
-    (process.env.SMTP_USER || '').trim() ||
+    stripHeaderNewlines(process.env.MAIL_FROM || '') ||
+    stripHeaderNewlines(process.env.SMTP_USER || '') ||
     'AttendQR <no-reply@attendqr.local>';
 
   // 1. Prefer Resend HTTP API if configured
   if (resendKey) {
     const payload = {
       from: defaultFrom,
-      to: [to],
-      subject,
+      to: [cleanTo],
+      subject: cleanSubject,
       text,
       html,
     };
-    if (replyTo) {
-      payload.reply_to = replyTo;
+    if (cleanReplyTo) {
+      payload.reply_to = cleanReplyTo;
     }
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -71,9 +89,9 @@ async function sendEmail({ to, subject, text, html, replyTo = '' }) {
   if (transporter) {
     await transporter.sendMail({
       from: defaultFrom,
-      to,
-      replyTo: replyTo || undefined,
-      subject,
+      to: cleanTo,
+      replyTo: cleanReplyTo || undefined,
+      subject: cleanSubject,
       text,
       html,
     });
@@ -85,12 +103,13 @@ async function sendEmail({ to, subject, text, html, replyTo = '' }) {
 }
 
 export async function sendSignupVerificationEmail({ to, name, code, expiresInMinutes = 15 }) {
-  const safeName = String(name || 'Instructor').trim();
-  const subject = `${code} is your AttendQR verification code`;
+  const safeName = stripHeaderNewlines(name || 'Instructor');
+  const safeCode = stripHeaderNewlines(code);
+  const subject = `${safeCode} is your AttendQR verification code`;
   const text = [
     `Hi ${safeName},`,
     '',
-    `Your AttendQR email verification code is: ${code}`,
+    `Your AttendQR email verification code is: ${safeCode}`,
     '',
     `Enter this 6-digit code to finish creating your instructor account. It expires in ${expiresInMinutes} minutes.`,
     '',
@@ -104,11 +123,11 @@ export async function sendSignupVerificationEmail({ to, name, code, expiresInMin
       </div>
       <h2 style="font-size: 18px; margin: 0 0 10px;">Confirm your email address</h2>
       <p style="font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 20px;">
-        Hi ${safeName.replace(/[<>&"]/g, '')}, enter the 6-digit verification code below to finish creating your instructor account:
+        Hi ${escapeHtml(safeName)}, enter the 6-digit verification code below to finish creating your instructor account:
       </p>
       <div style="background: #f1f5fb; border: 1px solid #d3dcec; border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 20px;">
         <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 30px; font-weight: 700; letter-spacing: 0.25em; color: #0f172a;">
-          ${code}
+          ${escapeHtml(safeCode)}
         </span>
       </div>
       <p style="font-size: 13px; color: #64748b; margin: 0;">
@@ -118,21 +137,22 @@ export async function sendSignupVerificationEmail({ to, name, code, expiresInMin
   `;
 
   const result = await sendEmail({ to, subject, text, html });
-  if (!result.delivered) {
+  if (!result.delivered && !IS_PRODUCTION) {
     console.log(
-      `\n[EMAIL VERIFICATION] Account: ${to} (${safeName}) | Code: ${code} | Expires in ${expiresInMinutes}m\n`
+      `\n[EMAIL VERIFICATION] Account: ${to} (${safeName}) | Code: ${safeCode} | Expires in ${expiresInMinutes}m\n`
     );
   }
   return result;
 }
 
 export async function sendPasswordResetEmail({ to, name, code, expiresAt }) {
-  const safeName = String(name || 'Instructor').trim();
-  const subject = `AttendQR Password Reset Code: ${code}`;
+  const safeName = stripHeaderNewlines(name || 'Instructor');
+  const safeCode = stripHeaderNewlines(code);
+  const subject = `AttendQR Password Reset Code: ${safeCode}`;
   const text = [
     `Hi ${safeName},`,
     '',
-    `Your AttendQR password reset code is: ${code}`,
+    `Your AttendQR password reset code is: ${safeCode}`,
     '',
     'This code expires in 15 minutes. If you did not request a password reset, you can ignore this email.',
   ].join('\n');
@@ -144,11 +164,11 @@ export async function sendPasswordResetEmail({ to, name, code, expiresAt }) {
       </div>
       <h2 style="font-size: 18px; margin: 0 0 10px;">Reset your password</h2>
       <p style="font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 20px;">
-        Hi ${safeName.replace(/[<>&"]/g, '')}, use this single-use code to reset your AttendQR password:
+        Hi ${escapeHtml(safeName)}, use this single-use code to reset your AttendQR password:
       </p>
       <div style="background: #f1f5fb; border: 1px solid #d3dcec; border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 20px;">
         <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 24px; font-weight: 700; letter-spacing: 0.14em; color: #0f172a;">
-          ${code}
+          ${escapeHtml(safeCode)}
         </span>
       </div>
       <p style="font-size: 13px; color: #64748b; margin: 0;">
@@ -158,9 +178,9 @@ export async function sendPasswordResetEmail({ to, name, code, expiresAt }) {
   `;
 
   const result = await sendEmail({ to, subject, text, html });
-  if (!result.delivered) {
+  if (!result.delivered && !IS_PRODUCTION) {
     console.log(
-      `\n[PASSWORD RESET] Account: ${to} | Code: ${code} | Expires: ${expiresAt}\n`
+      `\n[PASSWORD RESET] Account: ${to} | Code: ${safeCode} | Expires: ${expiresAt}\n`
     );
   }
   return result;
@@ -170,14 +190,6 @@ const DEFAULT_SUPPORT_EMAIL = 'attend.qrsupport@gmail.com';
 
 export function getSupportEmail() {
   return (process.env.SUPPORT_EMAIL || '').trim() || DEFAULT_SUPPORT_EMAIL;
-}
-
-function escapeHtml(val) {
-  return String(val ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 export async function sendSupportReportEmail({
@@ -230,7 +242,7 @@ export async function sendSupportReportEmail({
     html,
   });
 
-  if (!result.delivered) {
+  if (!result.delivered && !IS_PRODUCTION) {
     console.log(
       `\n[SUPPORT REPORT ${reportId}] From: ${cleanName} <${cleanEmail}> | Category: ${cleanCategory} | Subject: ${cleanSubject}\n${cleanMessage}\n`
     );

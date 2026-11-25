@@ -19,7 +19,7 @@ import {
   Send,
   AlertTriangle,
 } from 'lucide-react';
-import { api } from '../api';
+import { api, setAuthToken } from '../api';
 import { useFeedback } from './UiFeedback';
 import BrandLogo from './BrandLogo';
 import PrivacyPolicyModal from './PrivacyPolicyModal';
@@ -124,7 +124,10 @@ export default function AppShell({
     }
     setPwSaving(true);
     try {
-      await api.changePassword(pwForm.currentPassword, pwForm.newPassword);
+      const res = await api.changePassword(pwForm.currentPassword, pwForm.newPassword);
+      if (res?.token) {
+        setAuthToken(res.token);
+      }
       toast('Password updated successfully', 'success');
       setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setShowPasswordModal(false);
@@ -188,12 +191,10 @@ export default function AppShell({
           className="sidebar-brand"
           onClick={() => onNavigate('/')}
         >
-          <BrandLogo size={34} dark />
+          <BrandLogo size={32} dark />
         </button>
 
-        <div className="sidebar-section-label">WORKSPACE</div>
-
-        <nav className="sidebar-nav" aria-label="Workspace navigation">
+        <nav className="sidebar-nav" aria-label="Primary navigation">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = item.match(path);
@@ -204,10 +205,10 @@ export default function AppShell({
                 className={`sidebar-link ${active ? 'active' : ''}`}
                 onClick={() => onNavigate(item.path)}
               >
-                <Icon size={17} />
+                <Icon size={16} strokeWidth={1.75} />
                 <span>{item.label}</span>
                 {item.path === '/sessions' && liveSessions.length > 0 && (
-                  <span className="sidebar-live-badge">{liveSessions.length}</span>
+                  <span className="sidebar-live-dot" aria-label={`${liveSessions.length} active`} />
                 )}
               </button>
             );
@@ -225,12 +226,16 @@ export default function AppShell({
             setShowReportModal(true);
           }}
         >
-          <LifeBuoy size={15} />
+          <LifeBuoy size={15} strokeWidth={1.75} />
           <span>Report a problem</span>
         </button>
-        <div className="sidebar-footer-title">Made for the classroom</div>
-        <div className="sidebar-footer-sub">Less time on roll calls.</div>
-        <div className="sidebar-footer-sub">More time for teaching.</div>
+        <div className="sidebar-account-row">
+          <div className="sidebar-account-avatar">{avatarInitial}</div>
+          <div className="sidebar-account-info">
+            <div className="sidebar-account-name">{teacher?.name || 'Instructor'}</div>
+            <div className="sidebar-account-email">{teacher?.email || ''}</div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -282,10 +287,6 @@ export default function AppShell({
             </button>
 
             <div className="topbar-crumbs">
-              <button type="button" className="topbar-crumb-muted" onClick={() => onNavigate('/')}>
-                Workspace
-              </button>
-              <span className="topbar-crumb-slash">/</span>
               {breadcrumb ? (
                 <>
                   <button
@@ -310,14 +311,15 @@ export default function AppShell({
                 type="button"
                 className="live-pill-btn"
                 onClick={() => onOpenProjector(primaryLive.id)}
-                title="Open active QR display"
+                title="Open live QR projector"
               >
-                <Radio size={13} />
-                <span className="desktop-only">{primaryLive.classCode} Live QR</span>
+                <span className="status-dot live" />
+                <span className="mono">{primaryLive.classCode}</span>
+                <span className="desktop-only">Live</span>
               </button>
             )}
 
-            <span className="topbar-date desktop-only">{formattedDate}</span>
+            <span className="topbar-date tnum desktop-only">{formattedDate}</span>
 
             <div className="account-menu-wrap" ref={accountMenuRef}>
               <button

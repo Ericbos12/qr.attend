@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { hashPassword } from './auth.js';
+import { hashPassword, sanitizeText, sanitizeMultilineText } from './auth.js';
 import { initDatabase, getDb, getLegacyJsonPath } from './db.js';
 
 const RESET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -247,8 +247,8 @@ export const store = {
   async createTeacher({ name, email, password }) {
     const teacher = {
       id: `teacher_${crypto.randomBytes(6).toString('hex')}`,
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
+      name: sanitizeText(name, 100) || 'Instructor',
+      email: sanitizeText(email, 254).toLowerCase(),
       role: 'admin',
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
@@ -262,8 +262,8 @@ export const store = {
   },
 
   async createEmailVerification({ name, email, password }) {
-    const normalizedEmail = email.trim().toLowerCase();
-    const cleanName = name.trim();
+    const normalizedEmail = sanitizeText(email, 254).toLowerCase();
+    const cleanName = sanitizeText(name, 100);
     const passwordHash = hashPassword(password);
     const code = String(crypto.randomInt(100000, 1000000));
     const codeHash = crypto.createHash('sha256').update(code).digest('hex');
@@ -387,11 +387,11 @@ export const store = {
     const report = {
       id: `rep_${crypto.randomBytes(6).toString('hex')}`,
       teacherId: teacherId || null,
-      senderName: String(senderName || 'Instructor').trim(),
-      senderEmail: String(senderEmail || '').trim().toLowerCase(),
-      category: String(category || 'General').trim().slice(0, 60),
-      subject: String(subject || '').trim().slice(0, 160),
-      message: String(message || '').trim().slice(0, 4000),
+      senderName: sanitizeText(senderName || 'Instructor', 100) || 'Instructor',
+      senderEmail: sanitizeText(senderEmail || '', 254).toLowerCase(),
+      category: sanitizeText(category || 'General', 60) || 'General',
+      subject: sanitizeText(subject || '', 160),
+      message: sanitizeMultilineText(message || '', 4000),
       createdAt: new Date().toISOString(),
     };
     await getDb().execute(
@@ -518,9 +518,9 @@ export const store = {
     const cls = {
       id: `class_${crypto.randomBytes(6).toString('hex')}`,
       teacherId,
-      code: code.trim().toUpperCase(),
-      name: name.trim(),
-      room: (room || '').trim(),
+      code: sanitizeText(code, 24).toUpperCase(),
+      name: sanitizeText(name, 120),
+      room: sanitizeText(room || '', 80),
       createdAt: new Date().toISOString(),
     };
     await getDb().execute(
@@ -534,9 +534,11 @@ export const store = {
   async updateClass(classId, { code, name, room }) {
     const existing = await this.getClassById(classId);
     if (!existing) return null;
-    const nextCode = code !== undefined && code.trim() ? code.trim().toUpperCase() : existing.code;
-    const nextName = name !== undefined && name.trim() ? name.trim() : existing.name;
-    const nextRoom = room !== undefined ? room.trim() : existing.room;
+    const cleanCode = code !== undefined ? sanitizeText(code, 24).toUpperCase() : '';
+    const cleanName = name !== undefined ? sanitizeText(name, 120) : '';
+    const nextCode = cleanCode || existing.code;
+    const nextName = cleanName || existing.name;
+    const nextRoom = room !== undefined ? sanitizeText(room, 80) : existing.room;
 
     await getDb().execute(
       `UPDATE classes SET code = ?, name = ?, room = ? WHERE id = ?`,
@@ -626,8 +628,12 @@ export const store = {
       geoLock &&
       typeof geoLock.lat === 'number' &&
       typeof geoLock.lng === 'number' &&
-      !Number.isNaN(geoLock.lat) &&
-      !Number.isNaN(geoLock.lng)
+      Number.isFinite(geoLock.lat) &&
+      Number.isFinite(geoLock.lng) &&
+      geoLock.lat >= -90 &&
+      geoLock.lat <= 90 &&
+      geoLock.lng >= -180 &&
+      geoLock.lng <= 180
         ? {
             lat: geoLock.lat,
             lng: geoLock.lng,
@@ -640,8 +646,8 @@ export const store = {
       id: `sess_${crypto.randomBytes(5).toString('hex')}`,
       teacherId,
       classId,
-      title: (title || '').trim() || `${cls?.code || 'Class'} Lecture`,
-      room: (room || '').trim() || cls?.room || '',
+      title: sanitizeText(title || '', 140) || `${cls?.code || 'Class'} Lecture`,
+      room: sanitizeText(room || '', 80) || cls?.room || '',
       secret: crypto.randomBytes(24).toString('hex'),
       rotateIntervalSec: safeInterval,
       preventDuplicateDevice: Boolean(preventDuplicateDevice),
@@ -724,8 +730,8 @@ export const store = {
           : session.lateAfterMinutes;
     }
 
-    const title =
-      updates.title !== undefined && updates.title.trim() ? updates.title.trim() : session.title;
+    const cleanTitle = updates.title !== undefined ? sanitizeText(updates.title, 140) : '';
+    const title = cleanTitle || session.title;
 
     await getDb().execute(
       `UPDATE sessions
@@ -805,8 +811,11 @@ export const store = {
     nowMs = Date.now(),
   }) {
     const db = getDb();
-    const trimmedId = studentId.trim();
+    const trimmedId = sanitizeText(studentId, 40);
     const normalizedId = trimmedId.toUpperCase();
+    const cleanName = sanitizeText(studentName, 100);
+    const cleanDeviceId = sanitizeText(deviceId || '', 80);
+    const cleanNote = sanitizeText(note || '', 300);
 
     const existingStudent = await db.queryOne(
       `SELECT * FROM records WHERE session_id = ? AND student_id_normalized = ?`,
@@ -839,13 +848,13 @@ export const store = {
       id: `rec_${crypto.randomBytes(6).toString('hex')}`,
       sessionId,
       studentId: trimmedId,
-      studentName: studentName.trim(),
+      studentName: cleanName,
       status: computedStatus,
-      deviceId: deviceId || '',
+      deviceId: cleanDeviceId,
       deviceCookieId: deviceCookieId || '',
       clientIp: clientIp || '',
       method,
-      note: (note || '').trim(),
+      note: cleanNote,
       checkedInAt: new Date(nowMs).toISOString(),
     };
 
@@ -894,7 +903,7 @@ export const store = {
 
     const nextStatus =
       status === 'late' || status === 'present' ? status : existing.status || 'present';
-    const nextNote = note !== undefined ? String(note || '').trim() : existing.note || '';
+    const nextNote = note !== undefined ? sanitizeText(note, 300) : existing.note || '';
 
     await getDb().execute(
       `UPDATE records SET status = ?, note = ? WHERE id = ? AND session_id = ?`,

@@ -21,6 +21,7 @@ const CLAIM_TICKET_TTL_MS = 90 * 1000;
 const PREVIOUS_SLICE_GRACE_MS = 2500;
 
 const PASSWORD_KEY_LENGTH = 64;
+const MAX_PASSWORD_LENGTH = 128;
 
 // ============================================================
 // 2. IN-MEMORY CLAIM TICKET STORAGE
@@ -29,12 +30,51 @@ const PASSWORD_KEY_LENGTH = 64;
 const claimTickets = new Map();
 
 // ============================================================
+// 2B. INPUT SANITIZATION & CONSTANT-TIME HELPERS
+// ============================================================
+
+export function sanitizeText(value, maxLength = 200) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+export function sanitizeMultilineText(value, maxLength = 4000) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/\r\n/g, '\n')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .trim()
+    .slice(0, maxLength);
+}
+
+export function safeEqualStrings(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+export function getPasswordVersion(passwordHash) {
+  if (typeof passwordHash !== 'string' || !passwordHash) return '';
+  return crypto
+    .createHmac('sha256', AUTH_SECRET)
+    .update(`pwv:${passwordHash}`)
+    .digest('base64url')
+    .slice(0, 16);
+}
+
+// ============================================================
 // 3. PASSWORD HASHING
 // ============================================================
 
 export function hashPassword(password) {
-  if (typeof password !== 'string' || password.length === 0) {
-    throw new Error('A valid password is required.');
+  if (typeof password !== 'string' || password.length === 0 || password.length > MAX_PASSWORD_LENGTH) {
+    throw new Error('A valid password (up to 128 characters) is required.');
   }
 
   const salt = crypto.randomBytes(16).toString('hex');
@@ -49,6 +89,8 @@ export function hashPassword(password) {
 export function verifyPassword(password, stored) {
   if (
     typeof password !== 'string' ||
+    password.length === 0 ||
+    password.length > MAX_PASSWORD_LENGTH ||
     typeof stored !== 'string'
   ) {
     return false;
