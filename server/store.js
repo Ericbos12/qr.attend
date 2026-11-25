@@ -5,6 +5,8 @@ import { initDatabase, getDb, getLegacyJsonPath } from './db.js';
 
 const RESET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RESET_TTL_MS = 15 * 60 * 1000;
+const SIGNUP_CODE_TTL_MS = 15 * 60 * 1000;
+const SIGNUP_MAX_ATTEMPTS = 5;
 
 function mapTeacher(row) {
   if (!row) return null;
@@ -259,6 +261,106 @@ export const store = {
     return teacher;
   },
 
+  async createEmailVerification({ name, email, password }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
+    const passwordHash = hashPassword(password);
+    const code = String(crypto.randomInt(100000, 1000000));
+    const codeHash = crypto.createHash('sha256').update(code).digest('hex');
+    const now = Date.now();
+    const createdAt = new Date(now).toISOString();
+    const expiresAt = new Date(now + SIGNUP_CODE_TTL_MS).toISOString();
+
+    await getDb().execute(
+      `INSERT INTO email_verifications (email, name, password_hash, code_hash, attempts, expires_at, created_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?)
+       ON CONFLICT (email) DO UPDATE SET
+         name = EXCLUDED.name,
+         password_hash = EXCLUDED.password_hash,
+         code_hash = EXCLUDED.code_hash,
+         attempts = 0,
+         expires_at = EXCLUDED.expires_at,
+         created_at = EXCLUDED.created_at`,
+      [normalizedEmail, cleanName, passwordHash, codeHash, expiresAt, createdAt]
+    );
+
+    return { email: normalizedEmail, name: cleanName, code, expiresAt };
+  },
+
+  async verifyEmailAndCreateTeacher({ email, code }) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const cleanCode = String(code || '').replace(/\s+/g, '');
+    if (!normalizedEmail || !/^\d{6}$/.test(cleanCode)) {
+      return { ok: false, error: 'Please enter the 6-digit verification code sent to your email.' };
+    }
+
+    const row = await getDb().queryOne(
+      `SELECT * FROM email_verifications WHERE email = ?`,
+      [normalizedEmail]
+    );
+    if (!row) {
+      return { ok: false, error: 'No pending verification found for this email. Please request a new code.' };
+    }
+
+    if (Date.now() > Date.parse(row.expires_at)) {
+      await getDb().execute(`DELETE FROM email_verifications WHERE email = ?`, [normalizedEmail]);
+      return { ok: false, error: 'Verification code has expired. Please request a new code.' };
+    }
+
+    if (Number(row.attempts || 0) >= SIGNUP_MAX_ATTEMPTS) {
+      await getDb().execute(`DELETE FROM email_verifications WHERE email = ?`, [normalizedEmail]);
+      return { ok: false, error: 'Too many incorrect attempts. Please request a new verification code.' };
+    }
+
+    const submittedHash = crypto.createHash('sha256').update(cleanCode).digest();
+    const storedHash = Buffer.from(row.code_hash, 'hex');
+    const matches =
+      submittedHash.length === storedHash.length &&
+      crypto.timingSafeEqual(submittedHash, storedHash);
+
+    if (!matches) {
+      const nextAttempts = Number(row.attempts || 0) + 1;
+      await getDb().execute(
+        `UPDATE email_verifications SET attempts = ? WHERE email = ?`,
+        [nextAttempts, normalizedEmail]
+      );
+      const remaining = SIGNUP_MAX_ATTEMPTS - nextAttempts;
+      return {
+        ok: false,
+        error:
+          remaining > 0
+            ? `Incorrect verification code. ${remaining} ${remaining === 1 ? 'attempt' : 'attempts'} remaining.`
+            : 'Too many incorrect attempts. Please request a new verification code.',
+      };
+    }
+
+    const existing = await this.findTeacherByEmail(normalizedEmail);
+    if (existing) {
+      await getDb().execute(`DELETE FROM email_verifications WHERE email = ?`, [normalizedEmail]);
+      return { ok: false, status: 409, error: 'An administrator account with this email already exists.' };
+    }
+
+    const teacher = {
+      id: `teacher_${crypto.randomBytes(6).toString('hex')}`,
+      name: row.name,
+      email: normalizedEmail,
+      role: 'admin',
+      passwordHash: row.password_hash,
+      createdAt: new Date().toISOString(),
+    };
+
+    await getDb().transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO teachers (id, name, email, role, password_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [teacher.id, teacher.name, teacher.email, teacher.role, teacher.passwordHash, teacher.createdAt]
+      );
+      await tx.execute(`DELETE FROM email_verifications WHERE email = ?`, [normalizedEmail]);
+    });
+
+    return { ok: true, teacher };
+  },
+
   async updateTeacherPassword(teacherId, newPassword) {
     const passwordHash = hashPassword(newPassword);
     const { changes } = await getDb().execute(
@@ -266,6 +368,47 @@ export const store = {
       [passwordHash, teacherId]
     );
     return changes > 0;
+  },
+
+  async deleteTeacher(teacherId, email = '') {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    let deleted = false;
+    await getDb().transaction(async (tx) => {
+      const res = await tx.execute(`DELETE FROM teachers WHERE id = ?`, [teacherId]);
+      deleted = res.changes > 0;
+      if (normalizedEmail) {
+        await tx.execute(`DELETE FROM email_verifications WHERE email = ?`, [normalizedEmail]);
+      }
+    });
+    return deleted;
+  },
+
+  async createSupportReport({ teacherId, senderName, senderEmail, category, subject, message }) {
+    const report = {
+      id: `rep_${crypto.randomBytes(6).toString('hex')}`,
+      teacherId: teacherId || null,
+      senderName: String(senderName || 'Instructor').trim(),
+      senderEmail: String(senderEmail || '').trim().toLowerCase(),
+      category: String(category || 'General').trim().slice(0, 60),
+      subject: String(subject || '').trim().slice(0, 160),
+      message: String(message || '').trim().slice(0, 4000),
+      createdAt: new Date().toISOString(),
+    };
+    await getDb().execute(
+      `INSERT INTO support_reports (id, teacher_id, sender_name, sender_email, category, subject, message, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        report.id,
+        report.teacherId,
+        report.senderName,
+        report.senderEmail,
+        report.category,
+        report.subject,
+        report.message,
+        report.createdAt,
+      ]
+    );
+    return report;
   },
 
   async createPasswordResetToken(teacherId) {

@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { QrCode, Check, AlertCircle } from 'lucide-react';
+import { Check, AlertCircle } from 'lucide-react';
 import {
   api,
   getOrCreateDeviceId,
   getSavedStudentProfile,
   saveStudentProfile,
 } from '../api';
+import BrandLogo from './BrandLogo';
 
 export default function StudentCheckIn({ onGoHome }) {
   const saved = getSavedStudentProfile();
@@ -144,12 +145,7 @@ export default function StudentCheckIn({ onGoHome }) {
             borderBottom: '1px solid var(--border)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <div className="brand-mark" style={{ width: 26, height: 26 }}>
-              <QrCode size={14} />
-            </div>
-            <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>AttendQR</span>
-          </div>
+          <BrandLogo size={28} />
           <button
             type="button"
             onClick={onGoHome}

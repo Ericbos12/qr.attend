@@ -1,3 +1,29 @@
+import os from 'node:os';
+
+/**
+ * Finds the best local LAN IPv4 address (e.g. Wi-Fi / Ethernet) for QR codes when accessed via localhost.
+ */
+export function getLocalLanIp() {
+  const ifaces = os.networkInterfaces();
+  const candidates = [];
+  for (const [name, list] of Object.entries(ifaces)) {
+    if (!Array.isArray(list)) continue;
+    for (const addr of list) {
+      if (addr.family !== 'IPv4' || addr.internal) continue;
+      if (addr.address.startsWith('169.254.')) continue;
+      const lower = name.toLowerCase();
+      const isVirtual = /vethernet|virtual|vmware|vbox|wsl|docker|hyper-v|tailscale|loopback/.test(lower);
+      const isWifiOrEth = /wi-?fi|wlan|ethernet|en0|eth0/.test(lower);
+      candidates.push({
+        address: addr.address,
+        priority: isVirtual ? 3 : isWifiOrEth ? 1 : 2,
+      });
+    }
+  }
+  candidates.sort((a, b) => a.priority - b.priority);
+  return candidates[0]?.address || null;
+}
+
 /**
  * Extracts normalized client IP address from an Express request (proxy-aware for hosted deployments).
  */

@@ -78,6 +78,7 @@ async function request(path, options = {}) {
 
 export const api = {
   // Teacher Administrator Auth & Password Management
+  getAuthProviders: () => request('/api/auth/providers', { public: true }),
   login: (email, password) =>
     request('/api/auth/login', {
       method: 'POST',
@@ -85,16 +86,32 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   register: (name, email, password) =>
-    request('/api/auth/register', {
+    request('/api/auth/register/request', {
       method: 'POST',
       public: true,
       body: JSON.stringify({ name, email, password }),
+    }),
+  verifyRegister: (email, code) =>
+    request('/api/auth/register/verify', {
+      method: 'POST',
+      public: true,
+      body: JSON.stringify({ email, code }),
     }),
   me: () => request('/api/auth/me'),
   changePassword: (currentPassword, newPassword) =>
     request('/api/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  deleteAccount: (confirmation) =>
+    request('/api/auth/account', {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation }),
+    }),
+  reportProblem: (payload) =>
+    request('/api/support/report', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
   forgotPassword: (email) =>
     request('/api/auth/forgot-password', {

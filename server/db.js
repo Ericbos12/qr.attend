@@ -22,6 +22,25 @@ const SCHEMA_STATEMENTS = [
     used_at TEXT,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS email_verifications (
+    email TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS support_reports (
+    id TEXT PRIMARY KEY,
+    teacher_id TEXT,
+    sender_name TEXT NOT NULL,
+    sender_email TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'General',
+    subject TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS classes (
     id TEXT PRIMARY KEY,
     teacher_id TEXT NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,

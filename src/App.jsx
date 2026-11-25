@@ -17,6 +17,7 @@ function AppContent() {
   const [path, setPath] = useState(getCurrentPath());
   const [teacher, setTeacher] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [authError, setAuthError] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('attendqr_theme') || 'light');
 
   const [classes, setClasses] = useState([]);
@@ -48,6 +49,21 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    if (window.location.hash && window.location.hash.length > 1) {
+      const hashParams = new URLSearchParams(window.location.hash.slice(1));
+      const googleToken = hashParams.get('google_auth');
+      const googleErr = hashParams.get('auth_error');
+      if (googleToken || googleErr) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      if (googleToken) {
+        setAuthToken(googleToken);
+      }
+      if (googleErr) {
+        setAuthError(googleErr);
+      }
+    }
+
     const token = getAuthToken();
     if (!token) {
       setCheckingAuth(false);
@@ -55,7 +71,10 @@ function AppContent() {
     }
     api
       .me()
-      .then((res) => setTeacher(res.teacher))
+      .then((res) => {
+        setAuthError('');
+        setTeacher(res.teacher);
+      })
       .catch(() => {
         setAuthToken('');
         setTeacher(null);
@@ -104,7 +123,9 @@ function AppContent() {
   if (!teacher) {
     return (
       <LoginView
+        initialError={authError}
         onAuthenticated={(t) => {
+          setAuthError('');
           setTeacher(t);
           navigate('/');
         }}
@@ -154,7 +175,8 @@ function AppContent() {
   } else if (path === '/reports') {
     pageContent = <ReportsView classes={classes} />;
   } else {
-    const viewMode = path === '/sessions' ? 'sessions' : 'courses';
+    const viewMode =
+      path === '/sessions' ? 'sessions' : path === '/courses' ? 'courses' : 'overview';
     pageContent = (
       <Dashboard
         viewMode={viewMode}

@@ -12,12 +12,14 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { useFeedback } from './UiFeedback';
+import BrandLogo from './BrandLogo';
 
 export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
   const { toast, confirm } = useFeedback();
   const [session, setSession] = useState(null);
   const [records, setRecords] = useState([]);
   const [qrState, setQrState] = useState(null);
+  const [lanOrigin, setLanOrigin] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [remainingSec, setRemainingSec] = useState(8);
   const [progressPct, setProgressPct] = useState(100);
@@ -44,6 +46,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
         setSession(sessData.session);
         setRecords(sessData.records);
         setQrState(sessData.qr);
+        if (sessData.lanOrigin) setLanOrigin(sessData.lanOrigin);
         if (sessData.qr?.serverTime) {
           serverOffsetRef.current = sessData.qr.serverTime - Date.now();
         }
@@ -112,6 +115,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
           serverOffsetRef.current = data.qr.serverTime - Date.now();
         }
         setQrState(data.qr);
+        if (data.lanOrigin) setLanOrigin(data.lanOrigin);
       } catch {
       } finally {
         refreshingRef.current = false;
@@ -138,8 +142,12 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
     return () => clearInterval(tick);
   }, [sessionId, session?.status, qrState?.expiresAt, qrState?.intervalSec]);
 
+  const isLocalHost =
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const qrOrigin = isLocalHost && lanOrigin ? lanOrigin : window.location.origin;
+
   const scanUrl = qrState
-    ? `${window.location.origin}/checkin?s=${encodeURIComponent(sessionId)}&t=${encodeURIComponent(qrState.token)}`
+    ? `${qrOrigin}/checkin?s=${encodeURIComponent(sessionId)}&t=${encodeURIComponent(qrState.token)}`
     : '';
 
   useEffect(() => {
@@ -148,10 +156,10 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
     lastTokenRef.current = scanUrl;
 
     QRCode.toDataURL(scanUrl, {
-      width: 440,
+      width: 900,
       margin: 2,
       errorCorrectionLevel: 'M',
-      color: { dark: '#111418', light: '#ffffff' },
+      color: { dark: '#0f2342', light: '#ffffff' },
     })
       .then((url) => setQrDataUrl(url))
       .catch(() => {});
@@ -205,7 +213,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
   if (loading) {
     return (
       <div className="projector-page" style={{ alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: '#8b949e', fontSize: '0.9rem' }}>Loading QR session...</p>
+        <p style={{ color: '#93b4d8', fontSize: '0.9rem' }}>Loading QR session...</p>
       </div>
     );
   }
@@ -229,9 +237,10 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
           <button type="button" className="btn btn-sm proj-btn" onClick={onBack}>
             <ArrowLeft size={14} /> Courses
           </button>
+          <BrandLogo size={28} dark showText={false} />
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span className="mono" style={{ fontSize: '0.82rem', color: '#8ad4c7', fontWeight: 600 }}>
+              <span className="mono" style={{ fontSize: '0.82rem', color: '#93c5fd', fontWeight: 600 }}>
                 {session.classCode}
               </span>
               <span style={{ fontWeight: 600, fontSize: '0.98rem' }}>{session.title}</span>
@@ -239,7 +248,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
                 • {session.status === 'active' ? 'Open' : session.status === 'paused' ? 'Paused' : 'Closed'}
               </span>
             </div>
-            <div style={{ fontSize: '0.78rem', color: '#8b949e' }}>
+            <div style={{ fontSize: '0.78rem', color: '#93b4d8' }}>
               {session.className} {session.room ? `· ${session.room}` : ''}
               {session.lateAfterMinutes ? ` · Late after ${session.lateAfterMinutes}m` : ''}
             </div>
@@ -280,11 +289,11 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
       {/* Main Projector Body: Pure QR Stage + Live Roll Call */}
       <div className="projector-body">
         <div className="projector-stage">
-          <div style={{ marginBottom: 22 }}>
+          <div style={{ marginBottom: 14 }}>
             <h1 style={{ fontSize: 'clamp(1.45rem, 2.8vw, 2rem)', fontWeight: 600, letterSpacing: '-0.02em', marginBottom: 4 }}>
               Scan to Record Attendance
             </h1>
-            <p style={{ color: '#9ca3af', fontSize: '0.94rem' }}>
+            <p style={{ color: '#bfdbfe', fontSize: '0.94rem' }}>
               Point your phone camera at the QR code and submit your Student ID and full name.
             </p>
           </div>
@@ -293,7 +302,15 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
             {qrDataUrl ? (
               <img src={qrDataUrl} alt="Live Attendance QR Code" />
             ) : (
-              <div style={{ width: 320, height: 320, display: 'grid', placeItems: 'center', color: '#6b7280' }}>
+              <div
+                style={{
+                  width: 'min(620px, 68vh, 84vw)',
+                  height: 'min(620px, 68vh, 84vw)',
+                  display: 'grid',
+                  placeItems: 'center',
+                  color: '#6b7280',
+                }}
+              >
                 Generating QR...
               </div>
             )}
@@ -335,16 +352,21 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
             )}
           </div>
 
-          <p style={{ marginTop: 20, fontSize: '0.8rem', color: '#7d8590', maxWidth: 420 }}>
+          <p style={{ marginTop: 14, fontSize: '0.8rem', color: '#93b4d8', maxWidth: 460 }}>
             Live QR scan only — screenshots and forwarded links expire automatically and cannot be reused.
           </p>
+          {isLocalHost && lanOrigin && (
+            <p className="mono" style={{ marginTop: 6, fontSize: '0.74rem', color: '#bfdbfe', opacity: 0.85 }}>
+              Phone scan target: {lanOrigin} (connect phone to same Wi-Fi)
+            </p>
+          )}
         </div>
 
         {/* Right: Live Roll Call Sidebar */}
         <aside className="projector-sidebar">
           <div className="sidebar-header">
             <span style={{ fontWeight: 600, fontSize: '0.92rem' }}>Live Roll Call</span>
-            <span className="mono" style={{ fontSize: '0.95rem', fontWeight: 700, color: '#8ad4c7' }}>
+            <span className="mono" style={{ fontSize: '0.95rem', fontWeight: 700, color: '#93c5fd' }}>
               {records.length}
             </span>
           </div>
@@ -352,7 +374,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
           <div
             style={{
               padding: '10px 12px',
-              borderBottom: '1px solid #242930',
+              borderBottom: '1px solid #1e355c',
               display: 'flex',
               gap: 8,
             }}
@@ -374,8 +396,8 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
               onSubmit={handleManualAdd}
               style={{
                 padding: 12,
-                background: '#1b2027',
-                borderBottom: '1px solid #242930',
+                background: '#162b4f',
+                borderBottom: '1px solid #1e355c',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 8,
@@ -384,7 +406,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
               <input
                 className="input mono"
                 placeholder="Student ID"
-                style={{ background: '#111418', color: '#fff', borderColor: '#30363d', padding: '7px 10px', fontSize: '0.84rem' }}
+                style={{ background: '#0c1930', color: '#fff', borderColor: '#2c4a7a', padding: '7px 10px', fontSize: '0.84rem' }}
                 value={manualForm.studentId}
                 onChange={(e) => setManualForm({ ...manualForm, studentId: e.target.value })}
                 required
@@ -392,7 +414,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
               <input
                 className="input"
                 placeholder="Full Name"
-                style={{ background: '#111418', color: '#fff', borderColor: '#30363d', padding: '7px 10px', fontSize: '0.84rem' }}
+                style={{ background: '#0c1930', color: '#fff', borderColor: '#2c4a7a', padding: '7px 10px', fontSize: '0.84rem' }}
                 value={manualForm.studentName}
                 onChange={(e) => setManualForm({ ...manualForm, studentName: e.target.value })}
                 required
@@ -400,13 +422,13 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
               <button type="submit" className="btn btn-primary btn-sm">
                 Add to Register
               </button>
-              {manualMsg && <div style={{ fontSize: '0.78rem', color: '#8ad4c7' }}>{manualMsg}</div>}
+              {manualMsg && <div style={{ fontSize: '0.78rem', color: '#93c5fd' }}>{manualMsg}</div>}
             </form>
           )}
 
           <div className="sidebar-list">
             {records.length === 0 ? (
-              <div style={{ textAlign: 'center', color: '#6e7681', padding: '44px 16px', fontSize: '0.84rem' }}>
+              <div style={{ textAlign: 'center', color: '#88a8cc', padding: '44px 16px', fontSize: '0.84rem' }}>
                 Waiting for first scan...
               </div>
             ) : (
@@ -420,7 +442,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
                       style={{
                         fontWeight: 500,
                         fontSize: '0.88rem',
-                        color: '#f3f4f6',
+                        color: '#ffffff',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -428,7 +450,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
                     >
                       {rec.studentName}
                     </div>
-                    <div className="mono" style={{ fontSize: '0.76rem', color: '#8b949e', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div className="mono" style={{ fontSize: '0.76rem', color: '#93b4d8', display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span>{rec.studentId}</span>
                       {rec.status === 'late' && (
                         <span
@@ -446,7 +468,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
                       )}
                     </div>
                   </div>
-                  <div className="mono" style={{ fontSize: '0.74rem', color: '#6e7681', flexShrink: 0 }}>
+                  <div className="mono" style={{ fontSize: '0.74rem', color: '#88a8cc', flexShrink: 0 }}>
                     {new Date(rec.checkedInAt).toLocaleTimeString([], {
                       hour: '2-digit',
                       minute: '2-digit',

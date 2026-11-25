@@ -11,16 +11,22 @@ import {
   Crosshair,
   Search,
   Radio,
+  BookOpen,
+  Users,
+  Calendar,
+  ArrowRight,
+  Inbox,
 } from 'lucide-react';
 import { api } from '../api';
 import { useFeedback } from './UiFeedback';
 
 export default function Dashboard({
-  viewMode = 'courses', // 'courses' | 'sessions'
+  viewMode = 'overview', // 'overview' | 'courses' | 'sessions'
   classes = [],
   sessions = [],
   loading = false,
   onRefresh,
+  onNavigate,
   onOpenProjector,
   onOpenSessionDetail,
 }) {
@@ -226,31 +232,266 @@ export default function Dashboard({
     <div>
       {error && <div className="alert alert-error">{error}</div>}
 
-      {/* Page Header */}
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">
-            {viewMode === 'sessions' ? 'Attendance Register' : 'Courses'}
-          </h1>
-          <p className="page-sub">
-            {viewMode === 'sessions'
-              ? 'View attendance sessions, open live QR codes, or export registers as CSV.'
-              : 'Select a course to project a live rotating QR code for student attendance.'}
-          </p>
-        </div>
+      {/* Overview Workspace View */}
+      {viewMode === 'overview' && (
+        <>
+          <div className="overview-hero">
+            <div>
+              <div className="overview-eyebrow">LECTURER WORKSPACE</div>
+              <h1 className="overview-greeting">Good to see you 👋</h1>
+              <p className="overview-sub">Everything you need to keep attendance on track.</p>
+            </div>
+            <button type="button" className="btn btn-primary btn-hero-cta" onClick={openNewCourseModal}>
+              <Plus size={16} /> New course
+            </button>
+          </div>
 
-        {viewMode === 'courses' ? (
-          <button type="button" className="btn btn-primary" onClick={openNewCourseModal}>
-            <Plus size={15} /> Add Course
-          </button>
-        ) : (
-          sessions.length > 0 && (
-            <a className="btn btn-secondary btn-sm" href={api.getReportRecordsCsvUrl()} download>
-              <Download size={14} /> Export All CSV
-            </a>
-          )
-        )}
-      </div>
+          <div className="overview-stats-grid">
+            <div className="stat-card">
+              <div className="stat-icon stat-icon-indigo">
+                <BookOpen size={18} />
+              </div>
+              <div className="stat-label">Total courses</div>
+              <div className="stat-value">{classes.length}</div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon stat-icon-green">
+                <Radio size={18} />
+              </div>
+              <div className="stat-label">Live sessions</div>
+              <div className="stat-value">{activeCount}</div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon stat-icon-amber">
+                <Users size={18} />
+              </div>
+              <div className="stat-label">Total check-ins</div>
+              <div className="stat-value">{totalCheckIns}</div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon stat-icon-sky">
+                <Calendar size={18} />
+              </div>
+              <div className="stat-label">Sessions held</div>
+              <div className="stat-value">{sessions.length}</div>
+            </div>
+          </div>
+
+          {liveSessions.length > 0 ? (
+            <div className="quick-start-banner">
+              <div className="quick-start-content">
+                <div className="quick-start-eyebrow" style={{ color: '#6ee7b7' }}>
+                  ● {liveSessions[0].status === 'active' ? 'LIVE SESSION' : 'PAUSED SESSION'}
+                </div>
+                <h2 className="quick-start-title">
+                  {liveSessions[0].classCode} — {liveSessions[0].title}
+                </h2>
+                <p className="quick-start-sub">
+                  {liveSessions[0].attendeeCount} students checked in
+                  {liveSessions[0].room ? ` · ${liveSessions[0].room}` : ''}. Open the live projector to display the rotating QR code.
+                </p>
+              </div>
+              <div className="quick-start-actions">
+                <button
+                  type="button"
+                  className="btn quick-start-btn"
+                  onClick={() => onOpenProjector(liveSessions[0].id)}
+                >
+                  Open live QR <ArrowRight size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="btn quick-start-btn-ghost"
+                  onClick={() => onOpenSessionDetail(liveSessions[0].id)}
+                >
+                  Register
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="quick-start-banner">
+              <div className="quick-start-content">
+                <div className="quick-start-eyebrow">QUICK START</div>
+                <h2 className="quick-start-title">Ready for your next lecture?</h2>
+                <p className="quick-start-sub">
+                  Create a course, start a session, and put a QR code up for your students.
+                </p>
+              </div>
+              <div className="quick-start-actions">
+                {classes.length === 0 ? (
+                  <button
+                    type="button"
+                    className="btn quick-start-btn"
+                    onClick={openNewCourseModal}
+                  >
+                    Set up a course <ArrowRight size={15} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn quick-start-btn"
+                    onClick={() => openStartSessionModal(classes[0])}
+                  >
+                    Start live session <ArrowRight size={15} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="overview-bottom-grid">
+            <div className="overview-card">
+              <div className="overview-card-header">
+                <h3 className="overview-card-title">Your courses</h3>
+                <button
+                  type="button"
+                  className="text-link-btn"
+                  onClick={() => onNavigate?.('/courses')}
+                >
+                  View all <ArrowRight size={13} />
+                </button>
+              </div>
+
+              {loading ? (
+                <div className="overview-empty">Loading courses...</div>
+              ) : classes.length === 0 ? (
+                <div className="overview-empty">
+                  <Inbox size={26} className="overview-empty-icon" />
+                  <p>No courses yet. Add your first course to get started.</p>
+                </div>
+              ) : (
+                <div className="overview-list">
+                  {classes.slice(0, 4).map((cls) => (
+                    <div className="overview-list-row" key={cls.id}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className="course-code-label mono">{cls.code}</span>
+                          <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{cls.name}</span>
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginTop: 3 }}>
+                          {cls.room ? `${cls.room} · ` : ''}
+                          {cls.sessionCount} {cls.sessionCount === 1 ? 'session' : 'sessions'} · {cls.totalCheckIns} check-ins
+                        </div>
+                      </div>
+                      {cls.activeSessionId ? (
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => onOpenProjector(cls.activeSessionId)}
+                        >
+                          <QrCode size={13} /> Live QR
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => openStartSessionModal(cls)}
+                        >
+                          <Play size={13} /> Start QR
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="overview-card">
+              <div className="overview-card-header">
+                <h3 className="overview-card-title">Recent sessions</h3>
+                <button
+                  type="button"
+                  className="text-link-btn"
+                  onClick={() => onNavigate?.('/reports')}
+                >
+                  View reports <ArrowRight size={13} />
+                </button>
+              </div>
+
+              {loading ? (
+                <div className="overview-empty">Loading sessions...</div>
+              ) : sessions.length === 0 ? (
+                <div className="overview-empty">
+                  <Inbox size={26} className="overview-empty-icon" />
+                  <p>Your lecture sessions will show up here.</p>
+                </div>
+              ) : (
+                <div className="overview-list">
+                  {sessions.slice(0, 5).map((sess) => (
+                    <button
+                      type="button"
+                      className="overview-session-row"
+                      key={sess.id}
+                      onClick={() =>
+                        sess.status !== 'ended'
+                          ? onOpenProjector(sess.id)
+                          : onOpenSessionDetail(sess.id)
+                      }
+                    >
+                      <div style={{ minWidth: 0, textAlign: 'left' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          <span
+                            className={`status-dot ${
+                              sess.status === 'active'
+                                ? 'live'
+                                : sess.status === 'paused'
+                                ? 'paused'
+                                : ''
+                            }`}
+                          />
+                          <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{sess.title}</span>
+                        </div>
+                        <div style={{ fontSize: '0.76rem', color: 'var(--ink-muted)', marginTop: 2 }}>
+                          {new Date(sess.startedAt).toLocaleDateString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                      </div>
+                      <span className="mono" style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--ink-secondary)' }}>
+                        {sess.attendeeCount}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Page Header for Courses & Sessions views */}
+      {viewMode !== 'overview' && (
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">
+              {viewMode === 'sessions' ? 'Live session & Register' : 'Courses'}
+            </h1>
+            <p className="page-sub">
+              {viewMode === 'sessions'
+                ? 'View attendance sessions, open live QR codes, or export registers as CSV.'
+                : 'Select a course to project a live rotating QR code for student attendance.'}
+            </p>
+          </div>
+
+          {viewMode === 'courses' ? (
+            <button type="button" className="btn btn-primary" onClick={openNewCourseModal}>
+              <Plus size={15} /> New course
+            </button>
+          ) : (
+            sessions.length > 0 && (
+              <a className="btn btn-secondary btn-sm" href={api.getReportRecordsCsvUrl()} download>
+                <Download size={14} /> Export All CSV
+              </a>
+            )
+          )}
+        </div>
+      )}
 
       {/* Courses View */}
       {viewMode === 'courses' && (
@@ -276,7 +517,7 @@ export default function Dashboard({
                 <button
                   type="button"
                   className="btn btn-sm"
-                  style={{ background: '#ffffff', color: '#102a27' }}
+                  style={{ background: '#ffffff', color: '#1e3a8a' }}
                   onClick={() => onOpenProjector(liveSessions[0].id)}
                 >
                   <QrCode size={14} /> Open Live QR
@@ -599,6 +840,25 @@ export default function Dashboard({
             </div>
 
             <form onSubmit={handleStartSession}>
+              {classes.length > 1 && (
+                <div className="form-group">
+                  <label className="form-label">Course</label>
+                  <select
+                    className="select"
+                    value={startTargetClass.id}
+                    onChange={(e) => {
+                      const nextCls = classes.find((c) => c.id === e.target.value);
+                      if (nextCls) openStartSessionModal(nextCls);
+                    }}
+                  >
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code} — {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="form-group">
                 <label className="form-label">Session Label</label>
                 <input

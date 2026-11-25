@@ -19,11 +19,36 @@ import {
   verifyClaimTicket,
   burnClaimTicket,
 } from './auth.js';
-import { getClientIp, haversineDistanceMeters } from './network.js';
+import { getClientIp, getLocalLanIp, haversineDistanceMeters } from './network.js';
+import {
+  isEmailConfigured,
+  sendSignupVerificationEmail,
+  sendPasswordResetEmail,
+  sendSupportReportEmail,
+} from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3001;
 const DEVICE_COOKIE_NAME = 'attendqr_dev';
+const OAUTH_STATE_COOKIE_NAME = 'attendqr_oauth_state';
+
+function getGoogleOAuthConfig(req) {
+  const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+  const configuredRedirect = (process.env.GOOGLE_REDIRECT_URI || '').trim();
+  let redirectUri = configuredRedirect;
+  if (!redirectUri && req) {
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+    const host = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).split(',')[0].trim();
+    redirectUri = `${proto}://${host}/api/auth/google/callback`;
+  }
+  return {
+    enabled: Boolean(clientId && clientSecret),
+    clientId,
+    clientSecret,
+    redirectUri,
+  };
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -73,6 +98,12 @@ const claimRateLimit = createRateLimiter({
   windowMs: 60 * 1000,
   maxRequests: 60,
   message: 'Too many scan requests from this network. Please wait a moment and retry.',
+});
+
+const supportRateLimit = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 10,
+  message: 'Too many problem reports submitted recently. Please wait a few minutes before sending another.',
 });
 
 // SSE listeners per sessionId
@@ -183,25 +214,79 @@ app.get('/api/health', (_req, res) => {
 // TEACHER ADMINISTRATOR AUTH ROUTES
 // ==========================================
 app.post(
-  '/api/auth/register',
+  '/api/auth/register/request',
   authRateLimit,
   asyncHandler(async (req, res) => {
     const { name, email, password } = req.body || {};
-    if (!name?.trim() || !email?.trim() || !password || password.length < 6) {
+    const trimmedEmail = String(email || '').trim().toLowerCase();
+    if (
+      !name?.trim() ||
+      !trimmedEmail ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) ||
+      !password ||
+      password.length < 6
+    ) {
       return res.status(400).json({
-        error: 'Please provide your name, email, and a password (minimum 6 characters).',
+        error: 'Please provide your name, a valid email address, and a password (minimum 6 characters).',
       });
     }
-    if (await store.findTeacherByEmail(email)) {
+    if (await store.findTeacherByEmail(trimmedEmail)) {
       return res.status(409).json({
         error: 'An administrator account with this email already exists.',
       });
     }
-    const teacher = await store.createTeacher({ name, email, password });
-    const token = signAuthToken({ teacherId: teacher.id });
-    res.status(201).json({ token, teacher: sanitizeTeacher(teacher) });
+
+    const pending = await store.createEmailVerification({
+      name,
+      email: trimmedEmail,
+      password,
+    });
+
+    try {
+      const delivery = await sendSignupVerificationEmail({
+        to: pending.email,
+        name: pending.name,
+        code: pending.code,
+        expiresInMinutes: 15,
+      });
+
+      res.json({
+        ok: true,
+        email: pending.email,
+        delivered: delivery.delivered,
+        message: delivery.delivered
+          ? `We sent a 6-digit verification code to ${pending.email}. Enter it below to complete sign up.`
+          : `Email delivery is not configured yet. Your 6-digit verification code was logged in the server terminal (add SMTP or RESEND_API_KEY in .env to send real emails).`,
+      });
+    } catch (err) {
+      console.error('[MAIL ERROR]', err);
+      return res.status(502).json({
+        error: 'Could not send the verification email. Please check your SMTP/Resend settings in .env and try again.',
+      });
+    }
   })
 );
+
+app.post(
+  '/api/auth/register/verify',
+  authRateLimit,
+  asyncHandler(async (req, res) => {
+    const { email, code } = req.body || {};
+    const result = await store.verifyEmailAndCreateTeacher({ email, code });
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    const token = signAuthToken({ teacherId: result.teacher.id });
+    res.status(201).json({ token, teacher: sanitizeTeacher(result.teacher) });
+  })
+);
+
+app.post('/api/auth/register', authRateLimit, (_req, res) => {
+  res.status(400).json({
+    error: 'Email verification is required before creating an account. Please request a verification code first.',
+    code: 'EMAIL_VERIFICATION_REQUIRED',
+  });
+});
 
 app.post(
   '/api/auth/login',
@@ -217,6 +302,174 @@ app.post(
     }
     const token = signAuthToken({ teacherId: teacher.id });
     res.json({ token, teacher: sanitizeTeacher(teacher) });
+  })
+);
+
+app.get('/api/auth/providers', (_req, res) => {
+  const google = getGoogleOAuthConfig();
+  res.json({ google: google.enabled });
+});
+
+app.get('/api/auth/google', authRateLimit, (req, res) => {
+  const google = getGoogleOAuthConfig(req);
+  if (!google.enabled) {
+    return res.redirect(
+      `/#auth_error=${encodeURIComponent(
+        'Google Sign-In is not configured yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file and restart the server.'
+      )}`
+    );
+  }
+
+  const state = crypto.randomBytes(24).toString('base64url');
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+  const payload = Buffer.from(
+    JSON.stringify({
+      state,
+      codeVerifier,
+      redirectUri: google.redirectUri,
+      exp: Date.now() + 10 * 60 * 1000,
+    })
+  ).toString('base64url');
+
+  const signed = signCookieValue(payload);
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const secureFlag = isHttps ? '; Secure' : '';
+  res.setHeader(
+    'Set-Cookie',
+    `${OAUTH_STATE_COOKIE_NAME}=${encodeURIComponent(signed)}; Path=/api/auth/google; HttpOnly; SameSite=Lax; Max-Age=600${secureFlag}`
+  );
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', google.clientId);
+  authUrl.searchParams.set('redirect_uri', google.redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', 'openid email profile');
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('code_challenge', codeChallenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+  authUrl.searchParams.set('prompt', 'select_account');
+
+  res.redirect(authUrl.toString());
+});
+
+app.get(
+  '/api/auth/google/callback',
+  authRateLimit,
+  asyncHandler(async (req, res) => {
+    const clearStateCookie = () => {
+      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      const secureFlag = isHttps ? '; Secure' : '';
+      res.setHeader(
+        'Set-Cookie',
+        `${OAUTH_STATE_COOKIE_NAME}=; Path=/api/auth/google; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag}`
+      );
+    };
+    const failRedirect = (message) => {
+      clearStateCookie();
+      return res.redirect(`/#auth_error=${encodeURIComponent(message)}`);
+    };
+
+    const google = getGoogleOAuthConfig(req);
+    if (!google.enabled) {
+      return failRedirect('Google Sign-In is not configured on the server.');
+    }
+
+    if (req.query.error) {
+      return failRedirect('Google sign-in was cancelled or denied.');
+    }
+
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    if (!code || !state) {
+      return failRedirect('Invalid Google sign-in response. Please try again.');
+    }
+
+    const cookies = parseCookies(req);
+    const verifiedPayload = verifyCookieValue(cookies[OAUTH_STATE_COOKIE_NAME]);
+    if (!verifiedPayload) {
+      return failRedirect('Google sign-in session expired. Please try again.');
+    }
+
+    let stateData;
+    try {
+      stateData = JSON.parse(Buffer.from(verifiedPayload, 'base64url').toString('utf8'));
+    } catch {
+      return failRedirect('Invalid Google sign-in state. Please try again.');
+    }
+
+    if (
+      !stateData ||
+      stateData.state !== state ||
+      !stateData.codeVerifier ||
+      Date.now() > Number(stateData.exp || 0)
+    ) {
+      return failRedirect('Google sign-in verification failed. Please try again.');
+    }
+
+    clearStateCookie();
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: google.clientId,
+        client_secret: google.clientSecret,
+        redirect_uri: stateData.redirectUri || google.redirectUri,
+        grant_type: 'authorization_code',
+        code_verifier: stateData.codeVerifier,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      return res.redirect(
+        `/#auth_error=${encodeURIComponent('Could not complete Google sign-in. Please verify your Google OAuth credentials and redirect URI.')}`
+      );
+    }
+
+    const tokenData = await tokenRes.json();
+    if (!tokenData?.access_token) {
+      return res.redirect(
+        `/#auth_error=${encodeURIComponent('Google did not return an access token. Please try again.')}`
+      );
+    }
+
+    const profileRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!profileRes.ok) {
+      return res.redirect(
+        `/#auth_error=${encodeURIComponent('Failed to retrieve your Google account profile.')}`
+      );
+    }
+
+    const profile = await profileRes.json();
+    const email = typeof profile?.email === 'string' ? profile.email.trim().toLowerCase() : '';
+    const emailVerified = profile?.email_verified === true;
+    if (!email || !emailVerified) {
+      return res.redirect(
+        `/#auth_error=${encodeURIComponent('Your Google account must have a verified email address.')}`
+      );
+    }
+
+    let teacher = await store.findTeacherByEmail(email);
+    if (!teacher) {
+      const displayName =
+        (typeof profile?.name === 'string' && profile.name.trim()) ||
+        email.split('@')[0] ||
+        'Instructor';
+      teacher = await store.createTeacher({
+        name: displayName,
+        email,
+        password: crypto.randomBytes(32).toString('hex'),
+      });
+    }
+
+    const token = signAuthToken({ teacherId: teacher.id });
+    res.redirect(`/#google_auth=${encodeURIComponent(token)}`);
   })
 );
 
@@ -242,6 +495,69 @@ app.post(
   })
 );
 
+app.delete(
+  '/api/auth/account',
+  requireTeacher,
+  asyncHandler(async (req, res) => {
+    const { confirmation } = req.body || {};
+    if (String(confirmation || '').trim().toUpperCase() !== 'DELETE') {
+      return res.status(400).json({
+        error: 'Please type DELETE to permanently confirm account deletion.',
+      });
+    }
+    await store.deleteTeacher(req.teacher.id, req.teacher.email);
+    res.json({ ok: true, message: 'Your account and all associated data have been permanently deleted.' });
+  })
+);
+
+app.post(
+  '/api/support/report',
+  requireTeacher,
+  supportRateLimit,
+  asyncHandler(async (req, res) => {
+    const { category = 'Bug / Error', subject = '', message = '' } = req.body || {};
+    const cleanSubject = String(subject).trim();
+    const cleanMessage = String(message).trim();
+    if (!cleanSubject || cleanSubject.length < 3) {
+      return res.status(400).json({ error: 'Please enter a brief subject for your report.' });
+    }
+    if (!cleanMessage || cleanMessage.length < 10) {
+      return res.status(400).json({ error: 'Please describe the problem in at least 10 characters.' });
+    }
+
+    const report = await store.createSupportReport({
+      teacherId: req.teacher.id,
+      senderName: req.teacher.name,
+      senderEmail: req.teacher.email,
+      category,
+      subject: cleanSubject,
+      message: cleanMessage,
+    });
+
+    try {
+      await sendSupportReportEmail({
+        reportId: report.id,
+        senderName: report.senderName,
+        senderEmail: report.senderEmail,
+        category: report.category,
+        subject: report.subject,
+        message: report.message,
+      });
+    } catch (err) {
+      console.error('[SUPPORT MAIL ERROR]', err);
+      return res.status(502).json({
+        error: 'Your report was saved, but email delivery failed temporarily. Please try again shortly.',
+      });
+    }
+
+    res.status(201).json({
+      ok: true,
+      reportId: report.id,
+      message: 'Thank you! Your report has been sent to our support team.',
+    });
+  })
+);
+
 app.post(
   '/api/auth/forgot-password',
   authRateLimit,
@@ -253,15 +569,24 @@ app.post(
     const teacher = await store.findTeacherByEmail(email);
     if (teacher) {
       const { code, expiresAt } = await store.createPasswordResetToken(teacher.id);
-      console.log(
-        `\n[PASSWORD RESET] Account: ${teacher.email} | Code: ${code} | Expires: ${expiresAt}\n`
-      );
+      try {
+        await sendPasswordResetEmail({
+          to: teacher.email,
+          name: teacher.name,
+          code,
+          expiresAt,
+        });
+      } catch (err) {
+        console.error('[PASSWORD RESET MAIL ERROR]', err);
+        console.log(`\n[PASSWORD RESET] Account: ${teacher.email} | Code: ${code} | Expires: ${expiresAt}\n`);
+      }
     }
     // Always return the same response so account existence cannot be enumerated
     res.json({
       ok: true,
-      message:
-        'If an account matches that email, a 15-minute reset code has been generated in the server log.',
+      message: isEmailConfigured()
+        ? 'If an account matches that email, a 15-minute reset code has been sent to your inbox.'
+        : 'If an account matches that email, a 15-minute reset code has been generated in the server log.',
     });
   })
 );
@@ -396,10 +721,13 @@ app.get(
     }
     const records = (await store.getRecordsBySession(session.id)).map(sanitizeRecord);
     const qr = getSessionQrToken(session);
+    const lanIp = getLocalLanIp();
+    const lanOrigin = lanIp ? `http://${lanIp}:${PORT}` : null;
     res.json({
       session: await sanitizeSession(session),
       records,
       qr,
+      lanOrigin,
     });
   })
 );
@@ -413,9 +741,12 @@ app.get(
       return res.status(404).json({ error: 'Session not found.' });
     }
     const qr = getSessionQrToken(session);
+    const lanIp = getLocalLanIp();
+    const lanOrigin = lanIp ? `http://${lanIp}:${PORT}` : null;
     res.json({
       status: session.status,
       qr,
+      lanOrigin,
     });
   })
 );
