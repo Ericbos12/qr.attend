@@ -268,6 +268,13 @@ export default function AppShell({
 
       {/* Right Main Workspace Column */}
       <div className="workspace-main">
+        {/* Animated AttendQR custom workspace background */}
+        <div className="workspace-bg-stage no-print" aria-hidden="true">
+          <div className="workspace-bg-img" />
+          <div className="workspace-bg-sheen" />
+          <div className="workspace-bg-veil" />
+        </div>
+
         {/* Clean White Topbar */}
         <header className="workspace-topbar no-print">
           <div className="topbar-left">

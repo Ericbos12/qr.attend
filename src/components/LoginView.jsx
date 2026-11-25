@@ -479,8 +479,9 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
 
   return (
     <div className="auth-stage">
-      {/* Preserved AttendQR custom background + layered washes */}
-      <div className="auth-bg-layer auth-bg-layer-base" aria-hidden="true" />
+      {/* Preserved AttendQR custom background in smooth ambient motion + static center veil */}
+      <div className="auth-bg-layer auth-bg-layer-image" aria-hidden="true" />
+      <div className="auth-bg-layer auth-bg-layer-veil" aria-hidden="true" />
       <div className="auth-bg-layer auth-bg-layer-wash-a" aria-hidden="true" />
       <div className="auth-bg-layer auth-bg-layer-wash-b" aria-hidden="true" />
 
