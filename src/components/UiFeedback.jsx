@@ -93,8 +93,9 @@ export function FeedbackProvider({ children }) {
                 type="button"
                 className="btn btn-ghost icon-btn"
                 onClick={() => handleConfirmChoice(false)}
+                aria-label="Cancel confirmation dialog"
               >
-                <X size={16} />
+                <X size={16} strokeWidth={1.75} aria-hidden="true" />
               </button>
             </div>
             <p style={{ fontSize: '0.9rem', color: 'var(--ink-secondary)', lineHeight: 1.55, marginBottom: 22 }}>

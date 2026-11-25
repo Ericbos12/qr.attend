@@ -242,6 +242,10 @@ export default function AppShell({
 
   return (
     <div className="workspace-shell">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
       {/* Desktop Dark Navy Sidebar */}
       <aside className="workspace-sidebar no-print">{sidebarContent}</aside>
 
@@ -382,7 +386,7 @@ export default function AppShell({
                       setShowPrivacyModal(true);
                     }}
                   >
-                    <ShieldCheck size={15} />
+                    <ShieldCheck size={15} strokeWidth={1.75} aria-hidden="true" />
                     <span>Privacy policy</span>
                   </button>
                   <div className="account-dropdown-divider" />
@@ -414,7 +418,7 @@ export default function AppShell({
         </header>
 
         {/* Main Content Canvas */}
-        <main className="app-content view-fade" key={path}>
+        <main id="main-content" tabIndex={-1} className="app-content view-fade" key={path}>
           {children}
         </main>
       </div>

@@ -23,6 +23,66 @@ const PREVIOUS_SLICE_GRACE_MS = 2500;
 const PASSWORD_KEY_LENGTH = 64;
 const MAX_PASSWORD_LENGTH = 128;
 
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'password12', 'password123', 'password1234', 'passw0rd',
+  'p@ssword', 'p@ssw0rd', 'p@ssword1', 'p@ssword123', 'qwerty', 'qwerty123',
+  'qwertyuiop', '123456', '1234567', '12345678', '123456789', '1234567890',
+  '111111', '11111111', '000000', '00000000', 'admin', 'admin123', 'admin1234',
+  'administrator', 'welcome', 'welcome1', 'welcome123', 'letmein', 'letmein123',
+  'iloveyou', 'sunshine', 'princess', 'football', 'baseball', 'dragon', 'monkey',
+  'shadow', 'master', 'abc123', 'abc12345', 'abcd1234', 'test1234', 'testing123',
+  'changeme', 'changeme1', 'trustno1', 'starwars', 'superman', 'batman',
+  'attendqr', 'attendqr123', 'attendance', 'attendance1', 'classroom', 'university',
+  'college', 'school123', 'teacher', 'teacher123', 'lecturer', 'student123',
+  'professor', 'ghana123', 'accra123', 'kumasi123', 'secret123', 'default123',
+]);
+
+function normalizeLeet(str) {
+  return str
+    .toLowerCase()
+    .replace(/[@4]/g, 'a')
+    .replace(/[3]/g, 'e')
+    .replace(/[1!|]/g, 'i')
+    .replace(/[0]/g, 'o')
+    .replace(/[$5]/g, 's')
+    .replace(/[7]/g, 't')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+export function validateStrongPassword(password, email = '') {
+  if (typeof password !== 'string' || password.length < 10 || password.length > MAX_PASSWORD_LENGTH) {
+    return { ok: false, error: 'Password must be between 10 and 128 characters.' };
+  }
+  const lower = password.toLowerCase().trim();
+  const compact = lower.replace(/[^a-z0-9]/g, '');
+  const deleet = normalizeLeet(lower);
+  if (
+    COMMON_PASSWORDS.has(lower) ||
+    COMMON_PASSWORDS.has(compact) ||
+    COMMON_PASSWORDS.has(deleet) ||
+    /^(.)\1{5,}$/.test(lower) ||
+    /(012345|123456|234567|345678|456789|abcdef|qwerty|asdfgh|zxcvbn)/i.test(lower)
+  ) {
+    return { ok: false, error: 'That password is too common. Choose a stronger, unique password.' };
+  }
+  for (const bad of COMMON_PASSWORDS) {
+    if (bad.length >= 6 && (compact.includes(bad) || deleet.includes(bad))) {
+      return { ok: false, error: 'That password is too common. Choose a stronger, unique password.' };
+    }
+  }
+  const localPart = String(email || '').split('@')[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
+  if (localPart.length >= 4 && compact.includes(localPart)) {
+    return { ok: false, error: 'Password should not contain your email address.' };
+  }
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9\s]/.test(password)) {
+    return {
+      ok: false,
+      error: 'Password must include uppercase, lowercase, a number, and a symbol.',
+    };
+  }
+  return { ok: true };
+}
+
 // ============================================================
 // 2. IN-MEMORY CLAIM TICKET STORAGE
 // ============================================================

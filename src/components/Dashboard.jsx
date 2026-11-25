@@ -832,17 +832,19 @@ export default function Dashboard({
                       type="button"
                       className="btn btn-ghost icon-btn"
                       onClick={() => openEditCourseModal(cls)}
-                      title="Edit course"
+                      title={`Edit ${cls.code}`}
+                      aria-label={`Edit course ${cls.code} ${cls.name}`}
                     >
-                      <Pencil size={15} strokeWidth={1.75} />
+                      <Pencil size={15} strokeWidth={1.75} aria-hidden="true" />
                     </button>
                     <button
                       type="button"
                       className="btn btn-ghost icon-btn"
                       onClick={() => handleDeleteClass(cls)}
-                      title="Delete course"
+                      title={`Delete ${cls.code}`}
+                      aria-label={`Delete course ${cls.code} ${cls.name}`}
                     >
-                      <Trash2 size={15} strokeWidth={1.75} />
+                      <Trash2 size={15} strokeWidth={1.75} aria-hidden="true" />
                     </button>
                   </div>
                 </div>
@@ -867,6 +869,10 @@ export default function Dashboard({
               />
               <input
                 className="input"
+                type="search"
+                inputMode="search"
+                enterKeyHint="search"
+                aria-label="Search attendance sessions"
                 style={{ paddingLeft: 32, paddingTop: 7, paddingBottom: 7, fontSize: '0.84rem' }}
                 placeholder="Search sessions..."
                 value={sessionSearch}
@@ -962,31 +968,35 @@ export default function Dashboard({
                                 type="button"
                                 className="btn btn-primary btn-sm"
                                 onClick={() => onOpenProjector(sess.id)}
+                                aria-label={`Open live QR projector for ${sess.title}`}
                               >
-                                <QrCode size={14} strokeWidth={1.75} /> QR
+                                <QrCode size={14} strokeWidth={1.75} aria-hidden="true" /> Open QR
                               </button>
                             )}
                             <button
                               type="button"
                               className="btn btn-secondary btn-sm"
                               onClick={() => onOpenSessionDetail(sess.id)}
+                              aria-label={`View attendance register for ${sess.title}`}
                             >
-                              <Eye size={14} strokeWidth={1.75} /> Register
+                              <Eye size={14} strokeWidth={1.75} aria-hidden="true" /> View register
                             </button>
                             <a
                               className="btn btn-secondary btn-sm"
                               href={api.getExportCsvUrl(sess.id)}
                               download
+                              aria-label={`Download CSV attendance sheet for ${sess.title}`}
                             >
-                              <Download size={14} strokeWidth={1.75} /> CSV
+                              <Download size={14} strokeWidth={1.75} aria-hidden="true" /> Download CSV
                             </a>
                             <button
                               type="button"
                               className="btn btn-ghost icon-btn"
                               onClick={() => handleDeleteSession(sess)}
-                              title="Delete session"
+                              title={`Delete ${sess.title}`}
+                              aria-label={`Delete attendance session ${sess.title}`}
                             >
-                              <Trash2 size={15} strokeWidth={1.75} />
+                              <Trash2 size={15} strokeWidth={1.75} aria-hidden="true" />
                             </button>
                           </div>
                         </td>

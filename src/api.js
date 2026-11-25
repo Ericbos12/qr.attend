@@ -85,11 +85,11 @@ export const api = {
       public: true,
       body: JSON.stringify({ email, password }),
     }),
-  register: (name, email, password) =>
+  register: (name, email, password, consentAccepted = true) =>
     request('/api/auth/register/request', {
       method: 'POST',
       public: true,
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({ name, email, password, consentAccepted }),
     }),
   verifyRegister: (email, code) =>
     request('/api/auth/register/verify', {

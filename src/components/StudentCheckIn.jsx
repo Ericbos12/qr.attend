@@ -7,11 +7,15 @@ import {
   saveStudentProfile,
 } from '../api';
 import BrandLogo from './BrandLogo';
+import PrivacyPolicyModal from './PrivacyPolicyModal';
 
 export default function StudentCheckIn({ onGoHome }) {
   const saved = getSavedStudentProfile();
   const [studentId, setStudentId] = useState(saved?.studentId || '');
   const [studentName, setStudentName] = useState(saved?.studentName || '');
+  const [hasSavedProfile, setHasSavedProfile] = useState(Boolean(saved?.studentId || saved?.studentName));
+  const [studentConsent, setStudentConsent] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   const [claimState, setClaimState] = useState('verifying'); // 'verifying' | 'ready' | 'blocked'
   const [ticketId, setTicketId] = useState('');
@@ -255,17 +259,26 @@ export default function StudentCheckIn({ onGoHome }) {
             )}
 
             {error && (
-              <div className="alert alert-error">
-                <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <div className="alert alert-error" role="alert">
+                <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} aria-hidden="true" />
                 <span>{error}</span>
               </div>
             )}
 
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label className="form-label">Student ID *</label>
+                <label htmlFor="student-id-input" className="form-label">
+                  Student ID *
+                </label>
                 <input
+                  id="student-id-input"
                   className="input mono"
+                  type="text"
+                  inputMode="text"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="next"
                   placeholder="Enter your Student ID"
                   value={studentId}
                   onChange={(e) => setStudentId(e.target.value)}
@@ -275,9 +288,15 @@ export default function StudentCheckIn({ onGoHome }) {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Full Name *</label>
+                <label htmlFor="student-name-input" className="form-label">
+                  Full Name *
+                </label>
                 <input
+                  id="student-name-input"
                   className="input"
+                  type="text"
+                  autoCapitalize="words"
+                  enterKeyHint="done"
                   placeholder="Enter your full name"
                   value={studentName}
                   onChange={(e) => setStudentName(e.target.value)}
@@ -286,18 +305,60 @@ export default function StudentCheckIn({ onGoHome }) {
                 />
               </div>
 
+              <label htmlFor="student-consent" className="auth-consent-row">
+                <input
+                  id="student-consent"
+                  type="checkbox"
+                  checked={studentConsent}
+                  onChange={(e) => setStudentConsent(e.target.checked)}
+                  required
+                />
+                <span>
+                  I consent to recording my Student ID, name, and check-in time for this class under the{' '}
+                  <button
+                    type="button"
+                    className="text-link-btn"
+                    style={{ fontSize: 'inherit', fontWeight: 600, verticalAlign: 'baseline' }}
+                    onClick={() => setShowPrivacy(true)}
+                  >
+                    Privacy Policy
+                  </button>
+                  .
+                </span>
+              </label>
+
               <button
                 type="submit"
                 className="btn btn-primary btn-full btn-lg"
-                style={{ marginTop: 8 }}
-                disabled={submitting}
+                style={{ marginTop: 10 }}
+                disabled={submitting || !studentConsent}
               >
-                {submitting ? 'Submitting...' : 'Confirm Attendance'}
+                {submitting ? 'Recording attendance...' : 'Confirm my attendance'}
               </button>
+
+              {hasSavedProfile && (
+                <div style={{ textAlign: 'center', marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="text-link-btn"
+                    style={{ fontSize: '0.78rem', fontWeight: 500, color: 'var(--ink-muted)' }}
+                    onClick={() => {
+                      localStorage.removeItem('attendqr_student_profile');
+                      setStudentId('');
+                      setStudentName('');
+                      setHasSavedProfile(false);
+                    }}
+                  >
+                    Clear saved details on this phone
+                  </button>
+                </div>
+              )}
             </form>
           </>
         )}
       </div>
+
+      <PrivacyPolicyModal open={showPrivacy} onClose={() => setShowPrivacy(false)} />
     </div>
   );
 }

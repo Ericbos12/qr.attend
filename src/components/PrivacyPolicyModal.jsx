@@ -17,91 +17,111 @@ export default function PrivacyPolicyModal({ open, onClose }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="modal modal-animate"
-        style={{ maxWidth: 560 }}
+        style={{ maxWidth: 580 }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Privacy Policy"
+        aria-labelledby="privacy-modal-title"
       >
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <div className="confirm-icon">
-              <ShieldCheck size={16} />
+            <div className="confirm-icon" aria-hidden="true">
+              <ShieldCheck size={16} strokeWidth={1.75} />
             </div>
-            <h3 className="modal-title">Privacy Policy</h3>
+            <h2 id="privacy-modal-title" className="modal-title">
+              Privacy Policy
+            </h2>
           </div>
-          <button type="button" className="btn btn-ghost icon-btn" onClick={onClose} aria-label="Close">
-            <X size={16} />
+          <button
+            type="button"
+            className="btn btn-ghost icon-btn"
+            onClick={onClose}
+            aria-label="Close privacy policy dialog"
+          >
+            <X size={16} strokeWidth={1.75} />
           </button>
         </div>
 
         <div className="privacy-content">
-          <p className="privacy-updated">Last updated: November 2026</p>
+          <p className="privacy-updated">Effective: November 2026 · Service Operator: AttendQR</p>
 
           <p>
-            AttendQR is designed to help instructors record and manage classroom attendance securely.
-            This Privacy Policy explains what information we collect, how it is used, and your control over your data.
+            AttendQR is a classroom attendance register operated to help instructors verify live in-class
+            attendance with minimal personal data. We collect only what is strictly necessary to run the service.
           </p>
 
-          <h4>1. Information We Collect</h4>
+          <h3>1. Only Necessary Data Collected</h3>
           <ul>
             <li>
-              <strong>Instructor accounts:</strong> Your full name, email address, and either a securely hashed password
-              or verified profile details from Google Sign-In when you choose to continue with Google.
+              <strong>Instructor accounts:</strong> Full name, email address, and either a one-way salted
+              cryptographic password hash (scrypt) or verified Google account name/email when you choose{' '}
+              <strong>Continue with Google</strong>.
             </li>
             <li>
-              <strong>Course &amp; attendance data:</strong> Course codes, titles, rooms, session timestamps, and
-              student check-in submissions (Student ID, full name, check-in time, and attendance status).
+              <strong>Course &amp; attendance records:</strong> Course code, course title, lecture room,
+              session timestamps, and student check-in entries (Student ID, full name, timestamp, and
+              Present/Late status).
             </li>
             <li>
-              <strong>Anti-fraud &amp; verification signals:</strong> A randomly generated device identifier and signed
-              cookie are used to prevent duplicate submissions from the same phone. If an instructor enables optional
-              Classroom GPS Radius, the student&apos;s location is checked only at the moment of check-in to confirm
-              proximity and is not tracked continuously.
+              <strong>Anti-fraud signals (minimized):</strong> A random device identifier prevents duplicate
+              check-ins from one phone. Student IP addresses are used strictly in memory for rate limiting and
+              are <strong>not</strong> stored in attendance records. If an instructor enables optional Classroom
+              GPS Radius, coordinates are checked once in memory at check-in and are never stored or tracked.
             </li>
             <li>
-              <strong>Support reports:</strong> Details you choose to submit through the in-app Report a Problem form.
+              <strong>Support reports:</strong> Only the subject and message you intentionally submit via
+              Report a Problem.
             </li>
           </ul>
 
-          <h4>2. How We Use Your Information</h4>
+          <h3>2. Lawful Basis &amp; Applicable Data Protection Laws</h3>
+          <p>
+            We process personal data in alignment with the{' '}
+            <strong>Ghana Data Protection Act, 2012 (Act 843)</strong>, the{' '}
+            <strong>EU/UK GDPR</strong>, and educational privacy best practices (including FERPA data
+            minimization principles):
+          </p>
           <ul>
-            <li>Authenticate instructors and send email verification or password reset codes.</li>
-            <li>Generate rotating classroom QR codes and accurately record student attendance.</li>
-            <li>Create attendance summaries and CSV exports requested by the instructor.</li>
-            <li>Investigate and resolve technical issues reported through the support form.</li>
+            <li>
+              <strong>Consent:</strong> Instructor account registration, optional Google Sign-In, and student
+              check-in submission.
+            </li>
+            <li>
+              <strong>Educational administration &amp; integrity:</strong> Recording accurate class
+              attendance and preventing fraudulent proxy check-ins.
+            </li>
           </ul>
 
-          <h4>3. Data Security</h4>
+          <h3>3. Third-Party Services</h3>
           <p>
-            Passwords are never stored in plain text — they are protected with one-way salted cryptographic hashing
-            (scrypt). Live QR codes rotate continuously and exchange scans for short-lived, single-use device tickets.
+            AttendQR contains <strong>no advertising trackers, analytics pixels, or third-party social embeds</strong>.
+            External services are limited strictly to Google Sign-In (only when you click Continue with Google),
+            Google Fonts, and transactional email delivery for verification/reset codes and support reports.
           </p>
 
-          <h4>4. Third-Party Services</h4>
+          <h3>4. Your Rights &amp; Data Control</h3>
           <p>
-            We do not sell or rent your personal data. Data is only processed by essential infrastructure services
-            needed to run AttendQR (such as Google OAuth when you sign in with Google, email delivery for verification
-            codes, and database hosting).
+            You have the right to access, correct, export (CSV), or permanently delete your data at any time.
+            Instructors can edit or delete any course, session, or student entry directly, and can permanently
+            delete their entire account and all associated attendance records from the Account menu.
           </p>
 
-          <h4>5. Your Rights &amp; Account Deletion</h4>
+          <h3>5. Service Operator &amp; Contact</h3>
           <p>
-            You can edit or delete your courses, attendance sessions, and individual student records at any time.
-            You may also permanently delete your entire instructor account — along with all saved courses, sessions,
-            and attendance records — directly from your account menu inside the app.
-          </p>
-
-          <h4>6. Questions or Concerns</h4>
-          <p>
-            If you have any questions about this Privacy Policy or experience an issue, please sign in and use the
-            in-app <strong>Report a Problem</strong> form to reach our support team.
+            <strong>Service:</strong> AttendQR Classroom Attendance Platform
+            <br />
+            <strong>Support &amp; Data Protection Contact:</strong>{' '}
+            <a href="mailto:attend.qrsupport@gmail.com" className="policy-mail-link">
+              attend.qrsupport@gmail.com
+            </a>
+            <br />
+            Signed-in instructors can also submit requests via the in-app <strong>Report a problem</strong> form.
           </p>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
           <button type="button" className="btn btn-primary" onClick={onClose}>
-            Got it
+            Close policy
           </button>
         </div>
       </div>

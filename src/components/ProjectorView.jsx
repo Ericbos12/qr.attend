@@ -300,7 +300,10 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
 
           <div className="qr-frame">
             {qrDataUrl ? (
-              <img src={qrDataUrl} alt="Live Attendance QR Code" />
+              <img
+                src={qrDataUrl}
+                alt={`Live attendance QR code for ${session.classCode} — ${session.title}`}
+              />
             ) : (
               <div
                 style={{

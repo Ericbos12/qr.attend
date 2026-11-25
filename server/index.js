@@ -8,6 +8,7 @@ import { initStore, store } from './store.js';
 import { getDb } from './db.js';
 import {
   verifyPassword,
+  validateStrongPassword,
   signAuthToken,
   verifyAuthToken,
   getPasswordVersion,
@@ -56,19 +57,90 @@ function getRequestOrigin(req) {
   return `${proto}://${safeHost}`;
 }
 
+function parseAllowedRedirectUris() {
+  const candidates = [
+    ...(process.env.GOOGLE_ALLOWED_REDIRECT_URIS || '').split(','),
+    process.env.GOOGLE_REDIRECT_URI || '',
+  ]
+    .map((u) => u.trim())
+    .filter(Boolean);
+
+  const allowlist = new Set();
+  for (const raw of candidates) {
+    try {
+      const parsed = new URL(raw);
+      const isLocal = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+      if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocal)) continue;
+      if (parsed.pathname !== '/api/auth/google/callback') continue;
+      if (parsed.search || parsed.hash) continue;
+      allowlist.add(parsed.origin + parsed.pathname);
+    } catch {
+      // Ignore malformed env entries
+    }
+  }
+
+  // Local development convenience fallback ONLY when not in production and no explicit allowlist was set
+  if (allowlist.size === 0 && !IS_PRODUCTION) {
+    allowlist.add(`http://localhost:${PORT}/api/auth/google/callback`);
+  }
+
+  return Array.from(allowlist);
+}
+
+const PREAPPROVED_GOOGLE_REDIRECTS = parseAllowedRedirectUris();
+const PREAPPROVED_GOOGLE_REDIRECT_SET = new Set(PREAPPROVED_GOOGLE_REDIRECTS);
+
+const UNTRUSTED_REDIRECT_QUERY_KEYS = [
+  'redirect_uri',
+  'redirect',
+  'redirect_url',
+  'return_to',
+  'returnTo',
+  'next',
+  'callback',
+  'continue',
+  'url',
+];
+
 function getGoogleOAuthConfig(req) {
   const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
   const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
-  const configuredRedirect = (process.env.GOOGLE_REDIRECT_URI || '').trim();
-  let redirectUri = configuredRedirect;
-  if (!redirectUri && req) {
-    redirectUri = `${getRequestOrigin(req)}/api/auth/google/callback`;
+  const hasAllowlist = PREAPPROVED_GOOGLE_REDIRECTS.length > 0;
+
+  let redirectUri = null;
+  let rejectedReason = null;
+
+  if (req && hasAllowlist) {
+    // 1. NEVER trust redirect URLs passed in query parameters; reject any unapproved redirect attempt
+    for (const key of UNTRUSTED_REDIRECT_QUERY_KEYS) {
+      const val = req.query?.[key];
+      if (val !== undefined && String(val).trim() !== '') {
+        rejectedReason = 'Untrusted redirect parameter is not permitted.';
+        break;
+      }
+    }
+
+    // 2. Strictly match the request's origin against the preapproved exact allowlist (never construct an arbitrary URL)
+    if (!rejectedReason) {
+      const reqOrigin = getRequestOrigin(req);
+      const exactCandidate = `${reqOrigin}/api/auth/google/callback`;
+      if (PREAPPROVED_GOOGLE_REDIRECT_SET.has(exactCandidate)) {
+        redirectUri = exactCandidate;
+      } else {
+        rejectedReason = 'Request host does not match any preapproved OAuth redirect URI.';
+      }
+    }
+  } else if (hasAllowlist) {
+    redirectUri = PREAPPROVED_GOOGLE_REDIRECTS[0];
   }
+
   return {
-    enabled: Boolean(clientId && clientSecret),
+    enabled: Boolean(clientId && clientSecret && hasAllowlist),
     clientId,
     clientSecret,
     redirectUri,
+    rejectedReason,
+    allowlist: PREAPPROVED_GOOGLE_REDIRECTS,
   };
 }
 
@@ -76,6 +148,88 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '100kb', strict: true }));
+
+// Prototype-pollution & HTTP Parameter Pollution (HPP) guard + JSON Content-Type enforcement
+function stripDangerousKeys(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    for (const item of obj) stripDangerousKeys(item);
+    return obj;
+  }
+  for (const key of Object.keys(obj)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      delete obj[key];
+    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+      stripDangerousKeys(obj[key]);
+    }
+  }
+  return obj;
+}
+
+app.use('/api', (req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    stripDangerousKeys(req.body);
+  }
+  // Prevent HTTP Parameter Pollution (duplicate query params turned into arrays)
+  if (req.query && typeof req.query === 'object') {
+    for (const [k, v] of Object.entries(req.query)) {
+      if (Array.isArray(v)) {
+        return res.status(400).json({ error: `Duplicate query parameter "${k}" is not allowed.` });
+      }
+    }
+  }
+  // Enforce application/json on API state-changing requests with a body (CSRF defense-in-depth)
+  if (['POST', 'PATCH', 'PUT'].includes(req.method)) {
+    const contentLength = Number(req.headers['content-length'] || 0);
+    const ct = String(req.headers['content-type'] || '').toLowerCase();
+    if (contentLength > 0 && !ct.includes('application/json')) {
+      return res.status(415).json({ error: 'Content-Type must be application/json.' });
+    }
+  }
+  next();
+});
+
+// Per-account brute-force lockout (stops distributed credential stuffing across rotating IPs)
+const ACCOUNT_LOCKOUT_MAX = 5;
+const ACCOUNT_LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
+const accountFailures = new Map();
+
+function checkAccountLockout(email) {
+  const key = String(email || '').trim().toLowerCase();
+  if (!key) return null;
+  const entry = accountFailures.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.resetAt) {
+    accountFailures.delete(key);
+    return null;
+  }
+  if (entry.count >= ACCOUNT_LOCKOUT_MAX) {
+    return Math.max(1, Math.ceil((entry.resetAt - Date.now()) / 1000));
+  }
+  return null;
+}
+
+function recordAccountFailure(email) {
+  const key = String(email || '').trim().toLowerCase();
+  if (!key) return;
+  const now = Date.now();
+  let entry = accountFailures.get(key);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + ACCOUNT_LOCKOUT_WINDOW_MS };
+    accountFailures.set(key, entry);
+  }
+  entry.count += 1;
+  if (accountFailures.size > 5000) {
+    for (const [k, v] of accountFailures.entries()) {
+      if (now > v.resetAt) accountFailures.delete(k);
+    }
+  }
+}
+
+function clearAccountLockout(email) {
+  const key = String(email || '').trim().toLowerCase();
+  if (key) accountFailures.delete(key);
+}
 
 // Production security headers (CSP, HSTS, Clickjacking, MIME sniffing, Referrer & Permissions)
 const CSP_POLICY = [
@@ -338,20 +492,27 @@ app.post(
   '/api/auth/register/request',
   authRateLimit,
   asyncHandler(async (req, res) => {
-    const { name, email, password } = req.body || {};
+    const { name, email, password, consentAccepted } = req.body || {};
     const cleanName = sanitizeText(name, 100);
     const trimmedEmail = sanitizeText(email, 254).toLowerCase();
+    if (consentAccepted !== true) {
+      return res.status(400).json({
+        error: 'Please review and accept the Privacy Policy to create an account.',
+      });
+    }
     if (
       !cleanName ||
       !trimmedEmail ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) ||
-      typeof password !== 'string' ||
-      password.length < 6 ||
-      password.length > 128
+      typeof password !== 'string'
     ) {
       return res.status(400).json({
-        error: 'Please provide your name, a valid email address, and a password (6–128 characters).',
+        error: 'Please provide your name, a valid email address, and a secure password.',
       });
+    }
+    const pwCheck = validateStrongPassword(password, trimmedEmail);
+    if (!pwCheck.ok) {
+      return res.status(400).json({ error: pwCheck.error });
     }
     if (await store.findTeacherByEmail(trimmedEmail)) {
       return res.status(409).json({
@@ -426,10 +587,19 @@ app.post(
     if (!cleanEmail || typeof password !== 'string' || !password || password.length > 128) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
+    const lockSec = checkAccountLockout(cleanEmail);
+    if (lockSec) {
+      res.setHeader('Retry-After', String(lockSec));
+      return res.status(429).json({
+        error: 'Too many failed sign-in attempts for this account. Please wait 15 minutes or reset your password.',
+      });
+    }
     const teacher = await store.findTeacherByEmail(cleanEmail);
     if (!teacher || !verifyPassword(password, teacher.passwordHash)) {
+      recordAccountFailure(cleanEmail);
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
+    clearAccountLockout(cleanEmail);
     const token = issueTeacherToken(teacher);
     res.json({ token, teacher: sanitizeTeacher(teacher) });
   })
@@ -448,6 +618,12 @@ app.get('/api/auth/google', authRateLimit, (req, res) => {
         'Google Sign-In is currently unavailable. Please sign in with your email and password.'
       )}`
     );
+  }
+  if (google.rejectedReason || !google.redirectUri || !PREAPPROVED_GOOGLE_REDIRECT_SET.has(google.redirectUri)) {
+    return res.status(400).json({
+      error: google.rejectedReason || 'OAuth redirect URI is not in the preapproved allowlist.',
+      code: 'DISALLOWED_REDIRECT_URI',
+    });
   }
 
   const state = crypto.randomBytes(24).toString('base64url');
@@ -505,6 +681,13 @@ app.get(
     if (!google.enabled) {
       return failRedirect('Google Sign-In is not configured on the server.');
     }
+    if (google.rejectedReason) {
+      clearStateCookie();
+      return res.status(400).json({
+        error: google.rejectedReason,
+        code: 'DISALLOWED_REDIRECT_URI',
+      });
+    }
 
     if (req.query.error) {
       return failRedirect('Google sign-in was cancelled or denied.');
@@ -533,6 +716,7 @@ app.get(
       !stateData ||
       !safeEqualStrings(stateData.state, state) ||
       !stateData.codeVerifier ||
+      !PREAPPROVED_GOOGLE_REDIRECT_SET.has(stateData.redirectUri) ||
       Date.now() > Number(stateData.exp || 0)
     ) {
       return failRedirect('Google sign-in verification failed. Please try again.');
@@ -547,7 +731,7 @@ app.get(
         code,
         client_id: google.clientId,
         client_secret: google.clientSecret,
-        redirect_uri: stateData.redirectUri || google.redirectUri,
+        redirect_uri: stateData.redirectUri,
         grant_type: 'authorization_code',
         code_verifier: stateData.codeVerifier,
       }),
@@ -616,13 +800,15 @@ app.post(
     if (
       typeof currentPassword !== 'string' ||
       typeof newPassword !== 'string' ||
-      !currentPassword ||
-      newPassword.length < 6 ||
-      newPassword.length > 128
+      !currentPassword
     ) {
       return res.status(400).json({
-        error: 'Current password and a new password (6–128 characters) are required.',
+        error: 'Current password and a new password are required.',
       });
+    }
+    const pwCheck = validateStrongPassword(newPassword, req.teacher.email);
+    if (!pwCheck.ok) {
+      return res.status(400).json({ error: pwCheck.error });
     }
     if (!verifyPassword(currentPassword, req.teacher.passwordHash)) {
       return res.status(401).json({ error: 'Current password is incorrect.' });
@@ -743,21 +929,29 @@ app.post(
     const { email, code, newPassword } = req.body || {};
     const cleanEmail = sanitizeText(email, 254).toLowerCase();
     const cleanCode = sanitizeText(code, 32);
-    if (
-      !cleanEmail ||
-      !cleanCode ||
-      typeof newPassword !== 'string' ||
-      newPassword.length < 6 ||
-      newPassword.length > 128
-    ) {
+    if (!cleanEmail || !cleanCode || typeof newPassword !== 'string') {
       return res.status(400).json({
-        error: 'Email, reset code, and a new password (6–128 characters) are required.',
+        error: 'Email, reset code, and a new password are required.',
+      });
+    }
+    const pwCheck = validateStrongPassword(newPassword, cleanEmail);
+    if (!pwCheck.ok) {
+      return res.status(400).json({ error: pwCheck.error });
+    }
+    const lockSec = checkAccountLockout(`reset:${cleanEmail}`);
+    if (lockSec) {
+      res.setHeader('Retry-After', String(lockSec));
+      return res.status(429).json({
+        error: 'Too many failed reset code attempts. Please wait 15 minutes and request a new code.',
       });
     }
     const result = await store.consumePasswordResetToken(cleanEmail, cleanCode, newPassword);
     if (!result.ok) {
+      recordAccountFailure(`reset:${cleanEmail}`);
       return res.status(400).json({ error: result.error });
     }
+    clearAccountLockout(`reset:${cleanEmail}`);
+    clearAccountLockout(cleanEmail);
     res.json({ ok: true, message: 'Password has been reset. You may now sign in.' });
   })
 );
@@ -1346,11 +1540,11 @@ app.post(
 
     const result = await store.addRecord({
       sessionId: session.id,
-      studentId,
-      studentName,
+      studentId: cleanStudentId,
+      studentName: cleanStudentName,
       deviceId: deviceId || '',
       deviceCookieId: deviceCookieId || '',
-      clientIp: getClientIp(req),
+      clientIp: '', // Data minimization: do not persist student IP addresses in attendance records
       method: 'qr',
     });
 
