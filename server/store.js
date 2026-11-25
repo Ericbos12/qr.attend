@@ -17,8 +17,12 @@ function mapTeacher(row) {
     role: row.role || 'admin',
     passwordHash: row.password_hash,
     createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at || null,
   };
 }
+
+const lastSeenThrottle = new Map();
+const LAST_SEEN_THROTTLE_MS = 30 * 1000;
 
 function mapClass(row) {
   if (!row) return null;
@@ -1090,6 +1094,152 @@ export const store = {
       courses,
       students,
       records,
+    };
+  },
+
+  // ==========================================
+  // PRIVATE OWNER ACTIVE-USERS MONITOR
+  // ==========================================
+  async touchTeacherLastSeen(teacherId, { force = false } = {}) {
+    if (!teacherId) return;
+    const nowMs = Date.now();
+    const prev = lastSeenThrottle.get(teacherId) || 0;
+    if (!force && nowMs - prev < LAST_SEEN_THROTTLE_MS) return;
+    lastSeenThrottle.set(teacherId, nowMs);
+    const nowIso = new Date(nowMs).toISOString();
+    try {
+      await getDb().execute(
+        `UPDATE teachers SET last_seen_at = ? WHERE id = ?`,
+        [nowIso, teacherId]
+      );
+    } catch {
+      // Non-fatal telemetry update
+    }
+  },
+
+  async getOwnerPlatformMetrics() {
+    const db = getDb();
+    const nowMs = Date.now();
+    const onlineCutoffMs = nowMs - 5 * 60 * 1000; // 5 minutes
+    const dayCutoffMs = nowMs - 24 * 60 * 60 * 1000; // 24 hours
+    const weekCutoffMs = nowMs - 7 * 24 * 60 * 60 * 1000; // 7 days
+
+    const [teachers, classes, sessions, records] = await Promise.all([
+      db.query(`SELECT id, name, email, role, created_at, last_seen_at FROM teachers`),
+      db.query(`SELECT id, teacher_id, code, name, room FROM classes`),
+      db.query(`SELECT id, teacher_id, class_id, title, room, status, started_at, ended_at FROM sessions`),
+      db.query(`SELECT id, session_id, checked_in_at FROM records`),
+    ]);
+
+    const classById = new Map(classes.map((c) => [c.id, c]));
+    const teacherById = new Map(teachers.map((t) => [t.id, t]));
+    const recordCountBySession = new Map();
+    const checkInsByTeacher = new Map();
+    const sessionTeacherMap = new Map(sessions.map((s) => [s.id, s.teacher_id]));
+
+    let checkInsToday = 0;
+    let checkInsLast5Min = 0;
+    for (const r of records) {
+      recordCountBySession.set(r.session_id, (recordCountBySession.get(r.session_id) || 0) + 1);
+      const tId = sessionTeacherMap.get(r.session_id);
+      if (tId) {
+        checkInsByTeacher.set(tId, (checkInsByTeacher.get(tId) || 0) + 1);
+      }
+      const ts = r.checked_in_at ? Date.parse(r.checked_in_at) : 0;
+      if (ts >= dayCutoffMs) checkInsToday += 1;
+      if (ts >= onlineCutoffMs) checkInsLast5Min += 1;
+    }
+
+    const coursesByTeacher = new Map();
+    for (const c of classes) {
+      coursesByTeacher.set(c.teacher_id, (coursesByTeacher.get(c.teacher_id) || 0) + 1);
+    }
+
+    const sessionsByTeacher = new Map();
+    const liveSessionsByTeacher = new Map();
+    const liveSessions = [];
+
+    for (const s of sessions) {
+      sessionsByTeacher.set(s.teacher_id, (sessionsByTeacher.get(s.teacher_id) || 0) + 1);
+      if (s.status === 'active' || s.status === 'paused') {
+        liveSessionsByTeacher.set(s.teacher_id, (liveSessionsByTeacher.get(s.teacher_id) || 0) + 1);
+        const cls = classById.get(s.class_id);
+        const owner = teacherById.get(s.teacher_id);
+        liveSessions.push({
+          id: s.id,
+          title: s.title,
+          status: s.status,
+          room: s.room || cls?.room || '',
+          startedAt: s.started_at,
+          classCode: cls?.code || '',
+          className: cls?.name || 'Course',
+          teacherName: owner?.name || 'Instructor',
+          teacherEmail: owner?.email || '',
+          attendeeCount: recordCountBySession.get(s.id) || 0,
+        });
+      }
+    }
+
+    liveSessions.sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
+
+    let onlineNow = 0;
+    let activeToday = 0;
+    let activeWeek = 0;
+    let newUsersWeek = 0;
+
+    const users = teachers.map((t) => {
+      const lastSeenMs = t.last_seen_at ? Date.parse(t.last_seen_at) : 0;
+      const createdMs = t.created_at ? Date.parse(t.created_at) : 0;
+      const isOnline = lastSeenMs >= onlineCutoffMs;
+      const isActiveToday = lastSeenMs >= dayCutoffMs;
+      const isActiveWeek = lastSeenMs >= weekCutoffMs;
+
+      if (isOnline) onlineNow += 1;
+      if (isActiveToday) activeToday += 1;
+      if (isActiveWeek) activeWeek += 1;
+      if (createdMs >= weekCutoffMs) newUsersWeek += 1;
+
+      return {
+        id: t.id,
+        name: t.name,
+        email: t.email,
+        createdAt: t.created_at,
+        lastSeenAt: t.last_seen_at || null,
+        isOnline,
+        activeToday: isActiveToday,
+        activeWeek: isActiveWeek,
+        coursesCount: coursesByTeacher.get(t.id) || 0,
+        sessionsCount: sessionsByTeacher.get(t.id) || 0,
+        liveSessionsCount: liveSessionsByTeacher.get(t.id) || 0,
+        checkInsCount: checkInsByTeacher.get(t.id) || 0,
+      };
+    });
+
+    users.sort((a, b) => {
+      if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+      const aTs = a.lastSeenAt ? Date.parse(a.lastSeenAt) : 0;
+      const bTs = b.lastSeenAt ? Date.parse(b.lastSeenAt) : 0;
+      if (bTs !== aTs) return bTs - aTs;
+      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+    });
+
+    return {
+      summary: {
+        totalUsers: teachers.length,
+        onlineNow,
+        activeToday,
+        activeWeek,
+        newUsersWeek,
+        liveSessionsCount: liveSessions.length,
+        totalCourses: classes.length,
+        totalSessions: sessions.length,
+        checkInsToday,
+        checkInsLast5Min,
+        totalCheckIns: records.length,
+      },
+      liveSessions,
+      users,
+      generatedAt: new Date(nowMs).toISOString(),
     };
   },
 };

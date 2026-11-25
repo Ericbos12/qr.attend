@@ -8,6 +8,7 @@ import ReportsView from './components/ReportsView';
 import ProjectorView from './components/ProjectorView';
 import SessionDetail from './components/SessionDetail';
 import StudentCheckIn from './components/StudentCheckIn';
+import OwnerDashboard from './components/OwnerDashboard';
 
 function getCurrentPath() {
   return window.location.pathname;
@@ -101,6 +102,33 @@ function AppContent() {
     }
   }, [teacher, refreshWorkspace]);
 
+  // Lightweight presence heartbeat so active users stay accurate while tab is open
+  useEffect(() => {
+    if (!teacher) return;
+    const ping = () => {
+      if (document.visibilityState === 'visible') {
+        api.heartbeat().catch(() => {});
+      }
+    };
+    ping();
+    const timer = setInterval(ping, 60 * 1000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') ping();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [teacher]);
+
+  // Silently bounce non-owners away from /admin
+  useEffect(() => {
+    if (teacher && path === '/admin' && !teacher.isOwner) {
+      navigate('/');
+    }
+  }, [teacher, path, navigate]);
+
   useEffect(() => {
     if (!path.startsWith('/session/')) {
       setDetailCrumb(null);
@@ -172,6 +200,8 @@ function AppContent() {
         }
       />
     );
+  } else if (path === '/admin' && teacher?.isOwner) {
+    pageContent = <OwnerDashboard teacher={teacher} />;
   } else if (path === '/reports') {
     pageContent = <ReportsView classes={classes} />;
   } else {
@@ -200,6 +230,9 @@ function AppContent() {
       onToggleTheme={toggleTheme}
       onNavigate={navigate}
       onLogout={() => {
+        if (teacher?.isOwner) {
+          api.lockOwnerMonitor().catch(() => {});
+        }
         setAuthToken('');
         setTeacher(null);
         navigate('/');

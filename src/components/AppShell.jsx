@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Send,
   AlertTriangle,
+  Activity,
 } from 'lucide-react';
 import { api, setAuthToken } from '../api';
 import { useFeedback } from './UiFeedback';
@@ -41,6 +42,7 @@ function getPageCrumbLabel(path) {
   if (path === '/courses') return 'Courses';
   if (path === '/sessions') return 'Live session';
   if (path === '/reports') return 'Reports';
+  if (path === '/admin') return 'Active Users';
   if (path.startsWith('/session/')) return 'Live session';
   return 'Overview';
 }
@@ -213,6 +215,17 @@ export default function AppShell({
               </button>
             );
           })}
+          {teacher?.isOwner && (
+            <button
+              type="button"
+              className={`sidebar-link sidebar-owner-link ${path === '/admin' ? 'active' : ''}`}
+              onClick={() => onNavigate('/admin')}
+            >
+              <Activity size={16} strokeWidth={1.75} />
+              <span>Active users</span>
+              <span className="sidebar-owner-tag">Owner</span>
+            </button>
+          )}
         </nav>
       </div>
 

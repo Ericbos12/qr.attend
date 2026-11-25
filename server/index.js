@@ -30,6 +30,7 @@ import {
   sendSignupVerificationEmail,
   sendPasswordResetEmail,
   sendSupportReportEmail,
+  sendOwnerSecurityCodeEmail,
 } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,31 @@ const ALLOWED_ORIGINS = new Set(
     .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean)
 );
+
+// Exclusive single Owner email lock (configured via .env ONLY — never hardcoded in code)
+const RAW_OWNER_EMAIL = String(process.env.OWNER_EMAIL || '').trim().toLowerCase();
+const OWNER_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(RAW_OWNER_EMAIL) ? RAW_OWNER_EMAIL : '';
+
+const OWNER_GATE_COOKIE_NAME = 'attendqr_owner_gate';
+const OWNER_GATE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const OWNER_OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const OWNER_OTP_MAX_ATTEMPTS = 5;
+const OWNER_OTP_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+let pendingOwnerOtp = null; // { codeHash, expiresAt, attempts }
+let ownerOtpLockedUntil = 0;
+const ownerGateSessions = new Map(); // nonce -> { teacherId, pwv, expiresAt }
+
+function hashOwnerOtp(code) {
+  return crypto.createHash('sha256').update(`owner-otp:${String(code)}`).digest('hex');
+}
+
+function isOwnerEmail(email) {
+  if (!OWNER_EMAIL) return false;
+  const clean = String(email || '').trim().toLowerCase();
+  if (!clean) return false;
+  return safeEqualStrings(clean, OWNER_EMAIL);
+}
 
 function getRequestOrigin(req) {
   const rawProto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http')
@@ -351,6 +377,18 @@ const supportRateLimit = createRateLimiter({
   message: 'Too many problem reports submitted recently. Please wait a few minutes before sending another.',
 });
 
+const ownerOtpRateLimit = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 6,
+  message: 'Too many owner verification attempts. Please wait 15 minutes.',
+});
+
+const ownerMetricsRateLimit = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: 40,
+  message: 'Too many requests. Please slow down.',
+});
+
 app.use('/api', apiRateLimit);
 
 // SSE listeners per sessionId
@@ -424,6 +462,7 @@ function createRequireTeacher({ allowQueryToken = false } = {}) {
       return res.status(401).json({ error: 'Session expired. Please sign in again.' });
     }
     req.teacher = teacher;
+    store.touchTeacherLastSeen(teacher.id).catch(() => {});
     next();
   });
 }
@@ -431,13 +470,103 @@ function createRequireTeacher({ allowQueryToken = false } = {}) {
 const requireTeacher = createRequireTeacher({ allowQueryToken: false });
 const requireTeacherQueryAllowed = createRequireTeacher({ allowQueryToken: true });
 
+function setOwnerSecurityHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+}
+
+function clearOwnerGateCookie(req, res) {
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const secureFlag = isHttps ? '; Secure' : '';
+  res.setHeader(
+    'Set-Cookie',
+    `${OWNER_GATE_COOKIE_NAME}=; Path=/api/owner; HttpOnly; SameSite=Strict; Max-Age=0${secureFlag}`
+  );
+}
+
+// Stealth owner-only authentication: returns 404 to BOTH unauthenticated and non-owner callers
+const requireStealthOwner = asyncHandler(async (req, res, next) => {
+  setOwnerSecurityHeaders(res);
+  if (!OWNER_EMAIL) {
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+  const payload = verifyAuthToken(token);
+  if (!payload?.teacherId || typeof payload.pwv !== 'string') {
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  const teacher = await store.findTeacherById(payload.teacherId);
+  if (!teacher || (teacher.role || 'admin') !== 'admin') {
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  const currentPwv = getPasswordVersion(teacher.passwordHash);
+  if (!safeEqualStrings(payload.pwv, currentPwv)) {
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  if (!isOwnerEmail(teacher.email)) {
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  req.teacher = teacher;
+  req.teacherPwv = currentPwv;
+  store.touchTeacherLastSeen(teacher.id).catch(() => {});
+  next();
+});
+
+// Second-factor HttpOnly cookie gate bound to teacherId + password version + revocable server nonce
+function requireOwnerGate(req, res, next) {
+  setOwnerSecurityHeaders(res);
+  const cookies = parseCookies(req);
+  const rawSigned = cookies[OWNER_GATE_COOKIE_NAME];
+  const verified = verifyCookieValue(rawSigned);
+  if (!verified) {
+    return res.status(403).json({
+      error: 'Email verification code required to unlock the Owner Monitor.',
+      requiresOwnerVerification: true,
+    });
+  }
+  let data;
+  try {
+    data = JSON.parse(Buffer.from(verified, 'base64url').toString('utf8'));
+  } catch {
+    clearOwnerGateCookie(req, res);
+    return res.status(403).json({
+      error: 'Owner verification session expired. Please verify again.',
+      requiresOwnerVerification: true,
+    });
+  }
+  const session = data?.nonce ? ownerGateSessions.get(data.nonce) : null;
+  const now = Date.now();
+  if (
+    !session ||
+    now > session.expiresAt ||
+    !safeEqualStrings(session.teacherId, req.teacher.id) ||
+    !safeEqualStrings(session.pwv, req.teacherPwv) ||
+    !safeEqualStrings(data.teacherId || '', req.teacher.id)
+  ) {
+    if (data?.nonce) ownerGateSessions.delete(data.nonce);
+    clearOwnerGateCookie(req, res);
+    return res.status(403).json({
+      error: 'Owner verification session expired. Please verify again.',
+      requiresOwnerVerification: true,
+    });
+  }
+  req.ownerGateNonce = data.nonce;
+  next();
+}
+
 function sanitizeTeacher(teacher) {
-  return {
+  const safe = {
     id: teacher.id,
     name: teacher.name,
     email: teacher.email,
     role: teacher.role || 'admin',
   };
+  if (isOwnerEmail(teacher.email)) {
+    safe.isOwner = true;
+  }
+  return safe;
 }
 
 async function sanitizeSession(session) {
@@ -792,6 +921,159 @@ app.get('/api/auth/me', requireTeacher, (req, res) => {
 });
 
 app.post(
+  '/api/auth/heartbeat',
+  requireTeacher,
+  asyncHandler(async (req, res) => {
+    await store.touchTeacherLastSeen(req.teacher.id, { force: true });
+    res.json({ ok: true });
+  })
+);
+
+app.post(
+  '/api/owner/request-code',
+  requireStealthOwner,
+  ownerOtpRateLimit,
+  asyncHandler(async (_req, res) => {
+    const now = Date.now();
+    if (now < ownerOtpLockedUntil) {
+      const waitMin = Math.max(1, Math.ceil((ownerOtpLockedUntil - now) / 60000));
+      return res.status(429).json({
+        error: `Owner verification is temporarily locked. Try again in ${waitMin} minute(s).`,
+      });
+    }
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    pendingOwnerOtp = {
+      codeHash: hashOwnerOtp(code),
+      expiresAt: now + OWNER_OTP_TTL_MS,
+      attempts: 0,
+    };
+
+    try {
+      const result = await sendOwnerSecurityCodeEmail({
+        to: OWNER_EMAIL,
+        code,
+        expiresInMinutes: 5,
+      });
+      if (!result.delivered) {
+        pendingOwnerOtp = null;
+        return res.status(503).json({
+          error: 'Email delivery is not configured on the server. Owner 2FA requires working email delivery.',
+        });
+      }
+    } catch (err) {
+      pendingOwnerOtp = null;
+      console.error('[OWNER 2FA MAIL ERROR]', IS_PRODUCTION ? err?.message : err);
+      return res.status(502).json({
+        error: 'Could not send security code right now. Please try again shortly.',
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: `A 6-digit security code has been sent to ${OWNER_EMAIL}.`,
+    });
+  })
+);
+
+app.post(
+  '/api/owner/verify-code',
+  requireStealthOwner,
+  ownerOtpRateLimit,
+  asyncHandler(async (req, res) => {
+    const now = Date.now();
+    if (now < ownerOtpLockedUntil) {
+      const waitMin = Math.max(1, Math.ceil((ownerOtpLockedUntil - now) / 60000));
+      return res.status(429).json({
+        error: `Owner verification is temporarily locked. Try again in ${waitMin} minute(s).`,
+      });
+    }
+
+    const cleanCode = String(req.body?.code || '').replace(/\D/g, '').trim();
+    if (cleanCode.length !== 6) {
+      return res.status(400).json({ error: 'Enter the 6-digit verification code sent to your email.' });
+    }
+
+    if (!pendingOwnerOtp || now > pendingOwnerOtp.expiresAt) {
+      pendingOwnerOtp = null;
+      return res.status(400).json({ error: 'Verification code expired. Please request a new code.' });
+    }
+
+    const candidateHash = hashOwnerOtp(cleanCode);
+    if (!safeEqualStrings(candidateHash, pendingOwnerOtp.codeHash)) {
+      pendingOwnerOtp.attempts += 1;
+      if (pendingOwnerOtp.attempts >= OWNER_OTP_MAX_ATTEMPTS) {
+        pendingOwnerOtp = null;
+        ownerOtpLockedUntil = now + OWNER_OTP_LOCKOUT_MS;
+        return res.status(429).json({
+          error: 'Too many invalid codes. Owner verification is locked for 15 minutes.',
+        });
+      }
+      const remaining = OWNER_OTP_MAX_ATTEMPTS - pendingOwnerOtp.attempts;
+      return res.status(401).json({
+        error: `Invalid verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} left.`,
+      });
+    }
+
+    // Burn single-use code immediately and issue revocable HttpOnly gate session
+    pendingOwnerOtp = null;
+    for (const [k, s] of ownerGateSessions.entries()) {
+      if (now > s.expiresAt) ownerGateSessions.delete(k);
+    }
+
+    const nonce = crypto.randomBytes(24).toString('hex');
+    const expiresAt = now + OWNER_GATE_TTL_MS;
+    ownerGateSessions.set(nonce, {
+      teacherId: req.teacher.id,
+      pwv: req.teacherPwv,
+      expiresAt,
+    });
+
+    const payloadB64 = Buffer.from(
+      JSON.stringify({ nonce, teacherId: req.teacher.id, exp: expiresAt })
+    ).toString('base64url');
+    const signedCookie = signCookieValue(payloadB64);
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const secureFlag = isHttps ? '; Secure' : '';
+
+    res.setHeader(
+      'Set-Cookie',
+      `${OWNER_GATE_COOKIE_NAME}=${encodeURIComponent(signedCookie)}; Path=/api/owner; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(OWNER_GATE_TTL_MS / 1000)}${secureFlag}`
+    );
+
+    res.json({ ok: true, expiresInSeconds: Math.floor(OWNER_GATE_TTL_MS / 1000) });
+  })
+);
+
+app.post(
+  '/api/owner/lock',
+  requireStealthOwner,
+  (req, res) => {
+    const cookies = parseCookies(req);
+    const verified = verifyCookieValue(cookies[OWNER_GATE_COOKIE_NAME]);
+    if (verified) {
+      try {
+        const data = JSON.parse(Buffer.from(verified, 'base64url').toString('utf8'));
+        if (data?.nonce) ownerGateSessions.delete(data.nonce);
+      } catch {}
+    }
+    clearOwnerGateCookie(req, res);
+    res.json({ ok: true });
+  }
+);
+
+app.get(
+  '/api/owner/metrics',
+  requireStealthOwner,
+  ownerMetricsRateLimit,
+  requireOwnerGate,
+  asyncHandler(async (_req, res) => {
+    const metrics = await store.getOwnerPlatformMetrics();
+    res.json(metrics);
+  })
+);
+
+app.post(
   '/api/auth/change-password',
   authRateLimit,
   requireTeacher,
@@ -814,6 +1096,10 @@ app.post(
       return res.status(401).json({ error: 'Current password is incorrect.' });
     }
     await store.updateTeacherPassword(req.teacher.id, newPassword);
+    // Revoke any active owner gate sessions on password change
+    for (const [k, s] of ownerGateSessions.entries()) {
+      if (s.teacherId === req.teacher.id) ownerGateSessions.delete(k);
+    }
     const refreshed = await store.findTeacherById(req.teacher.id);
     const token = refreshed ? issueTeacherToken(refreshed) : null;
     res.json({ ok: true, token, message: 'Password updated successfully.' });

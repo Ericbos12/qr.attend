@@ -70,6 +70,7 @@ async function request(path, options = {}) {
     const err = new Error(data?.error || `Request failed (${res.status})`);
     err.status = res.status;
     err.code = data?.code;
+    err.data = data;
     throw err;
   }
 
@@ -98,6 +99,12 @@ export const api = {
       body: JSON.stringify({ email, code }),
     }),
   me: () => request('/api/auth/me'),
+  heartbeat: () => request('/api/auth/heartbeat', { method: 'POST' }),
+  getOwnerMetrics: () => request('/api/owner/metrics'),
+  requestOwnerCode: () => request('/api/owner/request-code', { method: 'POST' }),
+  verifyOwnerCode: (code) =>
+    request('/api/owner/verify-code', { method: 'POST', body: JSON.stringify({ code }) }),
+  lockOwnerMonitor: () => request('/api/owner/lock', { method: 'POST' }),
   changePassword: (currentPassword, newPassword) =>
     request('/api/auth/change-password', {
       method: 'POST',

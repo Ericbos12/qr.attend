@@ -145,6 +145,41 @@ export async function sendSignupVerificationEmail({ to, name, code, expiresInMin
   return result;
 }
 
+export async function sendOwnerSecurityCodeEmail({ to, code, expiresInMinutes = 5 }) {
+  const safeCode = stripHeaderNewlines(code);
+  const subject = `${safeCode} — AttendQR Owner Monitor Security Code`;
+  const text = [
+    'AttendQR Owner Security Verification',
+    '',
+    `Your one-time code to unlock the private Active Users Monitor is: ${safeCode}`,
+    '',
+    `This code expires in ${expiresInMinutes} minutes and can only be used once.`,
+    'If you did not request this unlock, change your account password immediately.',
+  ].join('\n');
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; color: #0f172a;">
+      <div style="font-size: 20px; font-weight: 700; margin-bottom: 16px;">
+        <span style="color: #0f2b5b;">attend</span><span style="color: #10c96f;"> qr</span>
+      </div>
+      <h2 style="font-size: 18px; margin: 0 0 10px;">Owner Monitor Security Code</h2>
+      <p style="font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 18px;">
+        Enter this one-time 6-digit code to unlock your private Active Users Monitor:
+      </p>
+      <div style="background: #f1f5fb; border: 1px solid #d3dcec; border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 18px;">
+        <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 30px; font-weight: 700; letter-spacing: 0.25em; color: #0f172a;">
+          ${escapeHtml(safeCode)}
+        </span>
+      </div>
+      <p style="font-size: 13px; color: #64748b; margin: 0;">
+        Expires in ${expiresInMinutes} minutes (single use). If you did not request this, change your password immediately.
+      </p>
+    </div>
+  `;
+
+  return sendEmail({ to, subject, text, html });
+}
+
 export async function sendPasswordResetEmail({ to, name, code, expiresAt }) {
   const safeName = stripHeaderNewlines(name || 'Instructor');
   const safeCode = stripHeaderNewlines(code);

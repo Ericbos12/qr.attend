@@ -13,7 +13,8 @@ const SCHEMA_STATEMENTS = [
     email TEXT NOT NULL UNIQUE,
     role TEXT NOT NULL DEFAULT 'admin',
     password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS password_resets (
     token_hash TEXT PRIMARY KEY,
@@ -119,6 +120,12 @@ class SqliteAdapter {
     for (const stmt of SCHEMA_STATEMENTS) {
       this.conn.exec(stmt);
     }
+
+    // Safe additive migration for existing SQLite databases
+    const teacherCols = this.conn.prepare('PRAGMA table_info(teachers)').all();
+    if (!teacherCols.some((c) => c.name === 'last_seen_at')) {
+      this.conn.exec('ALTER TABLE teachers ADD COLUMN last_seen_at TEXT');
+    }
   }
 
   async query(sql, params = []) {
@@ -185,6 +192,7 @@ class PostgresAdapter {
     for (const stmt of SCHEMA_STATEMENTS) {
       await this.pool.query(stmt);
     }
+    await this.pool.query('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS last_seen_at TEXT');
   }
 
   async query(sql, params = []) {
