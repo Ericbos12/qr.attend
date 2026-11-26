@@ -19,14 +19,12 @@ A real-time QR code classroom attendance web application. Instructors create an 
 See `.env.example`:
 - `PORT` — HTTP port (set automatically by cloud hosts; defaults to `3001`).
 - `ATTENDQR_SECRET` — **Required**: cryptographically random string of at least 32 bytes.
-- `DATABASE_URL` — PostgreSQL connection string (Render Postgres, Railway, Neon, Supabase).
+- `DATABASE_URL` — PostgreSQL connection string (Neon, Supabase, Railway).
 - `SQLITE_PATH` — Optional SQLite file path if deploying with a persistent volume instead of PostgreSQL.
 - `DATABASE_SSL` — Optional; defaults to SSL enabled for remote PostgreSQL (`false` disables SSL).
 
-### Build & Start Commands (Render / Railway / Fly.io)
+### Build & Start Commands (GitHub Auto-Deploy on Railway / Koyeb / Fly.io)
 - **Build Command**: `npm ci --include=dev && npm run build`
 - **Start Command**: `npm start`
 - **Health Check Path**: `/api/health`
 - **Node.js Version**: `>= 22.5.0`
-
-A `render.yaml` Blueprint is included for one-click deployment on Render with a managed PostgreSQL database and auto-generated `ATTENDQR_SECRET`.

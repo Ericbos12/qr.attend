@@ -602,7 +602,7 @@ function getOrAssignDeviceCookie(req, res) {
   return freshId;
 }
 
-// Health check (for cloud hosting platforms like Render / Railway / Fly.io)
+// Health check (for cloud hosting platforms such as Railway / Koyeb / Fly.io)
 app.get('/api/health', (_req, res) => {
   const payload = {
     ok: true,
