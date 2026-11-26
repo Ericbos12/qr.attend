@@ -1,4 +1,4 @@
-# AttendQR — Classroom Attendance Register
+# eriqo — Classroom Attendance Register
 
 A real-time QR code classroom attendance web application. Instructors create an administrator account, manage saved course codes, and project a live rotating QR code during class. Students scan from their phone browser and enter their **Student ID** and **Full Name** — no pre-loaded student roster or app installation required.
 

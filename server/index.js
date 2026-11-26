@@ -1915,7 +1915,7 @@ async function start() {
   const dbInfo = await ensureStoreReady();
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `AttendQR listening on port ${PORT} (database: ${dbInfo.dialect === 'postgres' ? 'postgresql' : 'sqlite'})`
+      `eriqo listening on port ${PORT} (database: ${dbInfo.dialect === 'postgres' ? 'postgresql' : 'sqlite'})`
     );
   });
 
@@ -1938,7 +1938,7 @@ const isMainModule =
 
 if (!IS_VERCEL && isMainModule) {
   start().catch((err) => {
-    console.error('Failed to start AttendQR server:', err);
+    console.error('Failed to start eriqo server:', err);
     process.exit(1);
   });
 }

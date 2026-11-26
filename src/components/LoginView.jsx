@@ -470,7 +470,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
       ? 'Verify your email'
       : mode === 'register'
       ? 'Create your account'
-      : 'Sign in to AttendQR';
+      : 'Sign in to eriqo';
 
   const eyeProgress = Math.min(1, email.length / 26);
   const guardianLooksAway = passwordFocused || (privacyGlass && password.length > 0);
@@ -479,7 +479,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
 
   return (
     <div className="auth-stage">
-      {/* Preserved AttendQR custom background in smooth ambient motion + static center veil */}
+      {/* Preserved eriqo custom background in smooth ambient motion + static center veil */}
       <div className="auth-bg-layer auth-bg-layer-image" aria-hidden="true" />
       <div className="auth-bg-layer auth-bg-layer-veil" aria-hidden="true" />
       <div className="auth-bg-layer auth-bg-layer-wash-a" aria-hidden="true" />
@@ -842,7 +842,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                         required
                       />
                       <span>
-                        I consent to AttendQR processing my account details under the{' '}
+                        I consent to eriqo processing my account details under the{' '}
                         <button
                           type="button"
                           className="text-link-btn"
@@ -870,7 +870,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                         ? 'Signing in...'
                         : 'Sending verification code...'
                       : mode === 'login'
-                      ? 'Sign in to AttendQR'
+                      ? 'Sign in to eriqo'
                       : 'Create instructor account'}
                     <ArrowRight size={15} strokeWidth={1.75} className="icon-optical-arrow" aria-hidden="true" />
                   </button>

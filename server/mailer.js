@@ -55,7 +55,7 @@ async function sendEmail({ to, subject, text, html, replyTo = '' }) {
   const defaultFrom =
     stripHeaderNewlines(process.env.MAIL_FROM || '') ||
     stripHeaderNewlines(process.env.SMTP_USER || '') ||
-    'AttendQR <no-reply@attendqr.local>';
+    'eriqo <no-reply@eriqo.local>';
 
   // 1. Prefer Resend HTTP API if configured
   if (resendKey) {
@@ -105,21 +105,21 @@ async function sendEmail({ to, subject, text, html, replyTo = '' }) {
 export async function sendSignupVerificationEmail({ to, name, code, expiresInMinutes = 15 }) {
   const safeName = stripHeaderNewlines(name || 'Instructor');
   const safeCode = stripHeaderNewlines(code);
-  const subject = `${safeCode} is your AttendQR verification code`;
+  const subject = `${safeCode} is your eriqo verification code`;
   const text = [
     `Hi ${safeName},`,
     '',
-    `Your AttendQR email verification code is: ${safeCode}`,
+    `Your eriqo email verification code is: ${safeCode}`,
     '',
     `Enter this 6-digit code to finish creating your instructor account. It expires in ${expiresInMinutes} minutes.`,
     '',
-    'If you did not try to create an AttendQR account, you can safely ignore this email.',
+    'If you did not try to create an eriqo account, you can safely ignore this email.',
   ].join('\n');
 
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; color: #0f172a;">
       <div style="font-size: 20px; font-weight: 700; margin-bottom: 16px;">
-        <span style="color: #0f2b5b;">attend</span><span style="color: #10c96f;"> qr</span>
+        <span style="color: #0f2b5b;">eri</span><span style="color: #10c96f;">qo</span>
       </div>
       <h2 style="font-size: 18px; margin: 0 0 10px;">Confirm your email address</h2>
       <p style="font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 20px;">
@@ -147,9 +147,9 @@ export async function sendSignupVerificationEmail({ to, name, code, expiresInMin
 
 export async function sendOwnerSecurityCodeEmail({ to, code, expiresInMinutes = 5 }) {
   const safeCode = stripHeaderNewlines(code);
-  const subject = `${safeCode} — AttendQR Owner Monitor Security Code`;
+  const subject = `${safeCode} — eriqo Owner Monitor Security Code`;
   const text = [
-    'AttendQR Owner Security Verification',
+    'eriqo Owner Security Verification',
     '',
     `Your one-time code to unlock the private Active Users Monitor is: ${safeCode}`,
     '',
@@ -160,7 +160,7 @@ export async function sendOwnerSecurityCodeEmail({ to, code, expiresInMinutes = 
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; color: #0f172a;">
       <div style="font-size: 20px; font-weight: 700; margin-bottom: 16px;">
-        <span style="color: #0f2b5b;">attend</span><span style="color: #10c96f;"> qr</span>
+        <span style="color: #0f2b5b;">eri</span><span style="color: #10c96f;">qo</span>
       </div>
       <h2 style="font-size: 18px; margin: 0 0 10px;">Owner Monitor Security Code</h2>
       <p style="font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 18px;">
@@ -183,11 +183,11 @@ export async function sendOwnerSecurityCodeEmail({ to, code, expiresInMinutes = 
 export async function sendPasswordResetEmail({ to, name, code, expiresAt }) {
   const safeName = stripHeaderNewlines(name || 'Instructor');
   const safeCode = stripHeaderNewlines(code);
-  const subject = `AttendQR Password Reset Code: ${safeCode}`;
+  const subject = `eriqo Password Reset Code: ${safeCode}`;
   const text = [
     `Hi ${safeName},`,
     '',
-    `Your AttendQR password reset code is: ${safeCode}`,
+    `Your eriqo password reset code is: ${safeCode}`,
     '',
     'This code expires in 15 minutes. If you did not request a password reset, you can ignore this email.',
   ].join('\n');
@@ -195,11 +195,11 @@ export async function sendPasswordResetEmail({ to, name, code, expiresAt }) {
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; color: #0f172a;">
       <div style="font-size: 20px; font-weight: 700; margin-bottom: 16px;">
-        <span style="color: #0f2b5b;">attend</span><span style="color: #10c96f;"> qr</span>
+        <span style="color: #0f2b5b;">eri</span><span style="color: #10c96f;">qo</span>
       </div>
       <h2 style="font-size: 18px; margin: 0 0 10px;">Reset your password</h2>
       <p style="font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 20px;">
-        Hi ${escapeHtml(safeName)}, use this single-use code to reset your AttendQR password:
+        Hi ${escapeHtml(safeName)}, use this single-use code to reset your eriqo password:
       </p>
       <div style="background: #f1f5fb; border: 1px solid #d3dcec; border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 20px;">
         <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 24px; font-weight: 700; letter-spacing: 0.14em; color: #0f172a;">
@@ -242,7 +242,7 @@ export async function sendSupportReportEmail({
   const cleanName = String(senderName || 'Instructor').trim();
   const cleanEmail = String(senderEmail || '').trim();
 
-  const mailSubject = `[AttendQR Support · ${cleanCategory}] ${cleanSubject}`;
+  const mailSubject = `[eriqo Support · ${cleanCategory}] ${cleanSubject}`;
   const text = [
     `Report ID: ${reportId}`,
     `From: ${cleanName} <${cleanEmail}>`,
@@ -256,7 +256,7 @@ export async function sendSupportReportEmail({
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #0f172a;">
       <div style="font-size: 18px; font-weight: 700; margin-bottom: 14px;">
-        <span style="color: #0f2b5b;">attend</span><span style="color: #10c96f;"> qr</span>
+        <span style="color: #0f2b5b;">eri</span><span style="color: #10c96f;">qo</span>
         <span style="font-size: 13px; color: #64748b; font-weight: 500; margin-left: 8px;">Problem Report</span>
       </div>
       <div style="background: #f1f5fb; border: 1px solid #d3dcec; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; font-size: 13px;">

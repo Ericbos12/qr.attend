@@ -2,7 +2,7 @@ import React from 'react';
 import { BrandMark } from './BrandLogo';
 
 /**
- * Friendly AttendQR Guardian mascot integrated cleanly beside the QR mark.
+ * Friendly eriqo Guardian mascot integrated cleanly beside the QR mark.
  * - Watches email typing smoothly (eyeProgress 0..1)
  * - Politely turns head away & raises hands over eyes when entering password
  * - Peeks shyly through one finger only if password is revealed without privacy glass
@@ -30,7 +30,7 @@ export default function LookAwayGuardian({
         className={`guardian-badge ${lookAway ? 'is-away' : ''} ${peek ? 'is-peeking' : ''} ${
           happy ? 'is-happy' : ''
         }`}
-        title={lookAway ? 'Looking away for your privacy' : 'AttendQR'}
+        title={lookAway ? 'Looking away for your privacy' : 'eriqo'}
       >
         <svg viewBox="0 0 64 64" width="44" height="44" style={{ display: 'block', overflow: 'visible' }}>
           {/* Soft circular studio backdrop */}

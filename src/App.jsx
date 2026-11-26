@@ -143,7 +143,7 @@ function AppContent() {
   if (checkingAuth) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--ink-muted)' }}>
-        Loading AttendQR...
+        Loading eriqo...
       </div>
     );
   }

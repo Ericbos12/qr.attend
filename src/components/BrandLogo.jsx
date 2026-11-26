@@ -45,8 +45,8 @@ export default function BrandLogo({ size = 34, dark = false, showText = true }) 
             alignItems: 'baseline',
           }}
         >
-          <span style={{ color: dark ? '#ffffff' : 'var(--ink)' }}>attend</span>
-          <span style={{ color: '#10c96f', marginLeft: 3 }}>qr</span>
+          <span style={{ color: dark ? '#ffffff' : 'var(--ink)' }}>eri</span>
+          <span style={{ color: '#10c96f' }}>qo</span>
         </span>
       )}
     </span>

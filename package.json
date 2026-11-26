@@ -2,7 +2,7 @@
   "name": "qr-attendance",
   "version": "1.0.0",
   "private": true,
-  "description": "AttendQR — Real-time QR Code Classroom Attendance Marker",
+  "description": "eriqo — Real-time QR Code Classroom Attendance Marker",
   "type": "module",
   "engines": {
     "node": "22.x"
