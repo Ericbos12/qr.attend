@@ -234,46 +234,20 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Per-account brute-force lockout (stops distributed credential stuffing across rotating IPs)
+// Per-account brute-force lockout (DB-backed so distributed credential stuffing is blocked across serverless instances)
 const ACCOUNT_LOCKOUT_MAX = 5;
 const ACCOUNT_LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
-const accountFailures = new Map();
 
-function checkAccountLockout(email) {
-  const key = String(email || '').trim().toLowerCase();
-  if (!key) return null;
-  const entry = accountFailures.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.resetAt) {
-    accountFailures.delete(key);
-    return null;
-  }
-  if (entry.count >= ACCOUNT_LOCKOUT_MAX) {
-    return Math.max(1, Math.ceil((entry.resetAt - Date.now()) / 1000));
-  }
-  return null;
+async function checkAccountLockout(email) {
+  return store.checkAccountLockout(email, ACCOUNT_LOCKOUT_MAX);
 }
 
-function recordAccountFailure(email) {
-  const key = String(email || '').trim().toLowerCase();
-  if (!key) return;
-  const now = Date.now();
-  let entry = accountFailures.get(key);
-  if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + ACCOUNT_LOCKOUT_WINDOW_MS };
-    accountFailures.set(key, entry);
-  }
-  entry.count += 1;
-  if (accountFailures.size > 5000) {
-    for (const [k, v] of accountFailures.entries()) {
-      if (now > v.resetAt) accountFailures.delete(k);
-    }
-  }
+async function recordAccountFailure(email) {
+  await store.recordAccountFailure(email, ACCOUNT_LOCKOUT_WINDOW_MS);
 }
 
-function clearAccountLockout(email) {
-  const key = String(email || '').trim().toLowerCase();
-  if (key) accountFailures.delete(key);
+async function clearAccountLockout(email) {
+  await store.clearAccountLockout(email);
 }
 
 // Production security headers (CSP, HSTS, Clickjacking, MIME sniffing, Referrer & Permissions)
@@ -736,7 +710,7 @@ app.post(
     if (!cleanEmail || typeof password !== 'string' || !password || password.length > 128) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
-    const lockSec = checkAccountLockout(cleanEmail);
+    const lockSec = await checkAccountLockout(cleanEmail);
     if (lockSec) {
       res.setHeader('Retry-After', String(lockSec));
       return res.status(429).json({
@@ -745,10 +719,10 @@ app.post(
     }
     const teacher = await store.findTeacherByEmail(cleanEmail);
     if (!teacher || !verifyPassword(password, teacher.passwordHash)) {
-      recordAccountFailure(cleanEmail);
+      await recordAccountFailure(cleanEmail);
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
-    clearAccountLockout(cleanEmail);
+    await clearAccountLockout(cleanEmail);
     const token = issueTeacherToken(teacher);
     res.json({ token, teacher: sanitizeTeacher(teacher) });
   })
@@ -1241,7 +1215,7 @@ app.post(
     if (!pwCheck.ok) {
       return res.status(400).json({ error: pwCheck.error });
     }
-    const lockSec = checkAccountLockout(`reset:${cleanEmail}`);
+    const lockSec = await checkAccountLockout(`reset:${cleanEmail}`);
     if (lockSec) {
       res.setHeader('Retry-After', String(lockSec));
       return res.status(429).json({
@@ -1250,11 +1224,11 @@ app.post(
     }
     const result = await store.consumePasswordResetToken(cleanEmail, cleanCode, newPassword);
     if (!result.ok) {
-      recordAccountFailure(`reset:${cleanEmail}`);
+      await recordAccountFailure(`reset:${cleanEmail}`);
       return res.status(400).json({ error: result.error });
     }
-    clearAccountLockout(`reset:${cleanEmail}`);
-    clearAccountLockout(cleanEmail);
+    await clearAccountLockout(`reset:${cleanEmail}`);
+    await clearAccountLockout(cleanEmail);
     res.json({ ok: true, message: 'Password has been reset. You may now sign in.' });
   })
 );

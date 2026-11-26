@@ -106,6 +106,11 @@ const SCHEMA_STATEMENTS = [
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS account_lockouts (
+    lock_key TEXT PRIMARY KEY,
+    failures INTEGER NOT NULL DEFAULT 0,
+    reset_at TEXT NOT NULL
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes(teacher_id)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_teacher_started ON sessions(teacher_id, started_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_class ON sessions(class_id)`,
@@ -207,7 +212,7 @@ class PostgresAdapter {
     const Client = pgMod.default?.Client || pgMod.Client;
     const isLocalhost = /localhost|127\.0\.0\.1/i.test(this.connectionString);
     const disableSsl = process.env.DATABASE_SSL === 'false' || isLocalhost;
-    const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
+    const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false';
     const sslConfig = disableSsl ? false : { rejectUnauthorized };
     const isServerless = Boolean(process.env.VERCEL);
 
@@ -216,7 +221,7 @@ class PostgresAdapter {
       ssl: sslConfig,
       max: isServerless ? 3 : 10,
       idleTimeoutMillis: isServerless ? 10000 : 30000,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: 20000,
     });
 
     // Vercel Fluid compute best practice: attach pool so idle connections release cleanly before suspend
@@ -240,7 +245,7 @@ class PostgresAdapter {
       const ddlClient = new Client({
         connectionString: this.unpooledConnectionString,
         ssl: sslConfig,
-        connectionTimeoutMillis: 10000,
+        connectionTimeoutMillis: 20000,
       });
       await ddlClient.connect();
       try {

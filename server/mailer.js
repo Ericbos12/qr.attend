@@ -32,7 +32,7 @@ export function isEmailConfigured() {
   return hasResend || hasSmtp;
 }
 
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
 
 function stripHeaderNewlines(val) {
   return String(val ?? '').replace(/[\r\n]+/g, ' ').trim();

@@ -468,6 +468,10 @@ export const store = {
         `UPDATE teachers SET password_hash = ? WHERE id = ?`,
         [newHash, teacher.id]
       );
+      await tx.execute(
+        `DELETE FROM owner_gate_sessions WHERE teacher_id = ?`,
+        [teacher.id]
+      );
     });
 
     return { ok: true, teacher };
@@ -1474,5 +1478,60 @@ export const store = {
   async deleteOwnerGateSessionsForTeacher(teacherId) {
     if (!teacherId) return;
     await getDb().execute(`DELETE FROM owner_gate_sessions WHERE teacher_id = ?`, [teacherId]);
+  },
+
+  // ==========================================
+  // DB-BACKED BRUTE-FORCE ACCOUNT LOCKOUTS
+  // ==========================================
+  async checkAccountLockout(rawKey, maxFailures = 5) {
+    const key = String(rawKey || '').trim().toLowerCase().slice(0, 300);
+    if (!key) return null;
+    const db = getDb();
+    const row = await db.queryOne(`SELECT failures, reset_at FROM account_lockouts WHERE lock_key = ?`, [key]);
+    if (!row) return null;
+    const resetMs = Date.parse(row.reset_at);
+    const now = Date.now();
+    if (!Number.isFinite(resetMs) || now > resetMs) {
+      await db.execute(`DELETE FROM account_lockouts WHERE lock_key = ?`, [key]);
+      return null;
+    }
+    if (Number(row.failures || 0) >= maxFailures) {
+      return Math.max(1, Math.ceil((resetMs - now) / 1000));
+    }
+    return null;
+  },
+
+  async recordAccountFailure(rawKey, windowMs = 15 * 60 * 1000) {
+    const key = String(rawKey || '').trim().toLowerCase().slice(0, 300);
+    if (!key) return;
+    const db = getDb();
+    const now = Date.now();
+    const existing = await db.queryOne(
+      `SELECT failures, reset_at FROM account_lockouts WHERE lock_key = ?`,
+      [key]
+    );
+    const existingReset = existing?.reset_at ? Date.parse(existing.reset_at) : 0;
+    const nextFailures = existing && Number.isFinite(existingReset) && now <= existingReset
+      ? Number(existing.failures || 0) + 1
+      : 1;
+    const nextResetIso =
+      existing && Number.isFinite(existingReset) && now <= existingReset
+        ? existing.reset_at
+        : new Date(now + windowMs).toISOString();
+
+    await db.execute(
+      `INSERT INTO account_lockouts (lock_key, failures, reset_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT (lock_key) DO UPDATE SET
+         failures = EXCLUDED.failures,
+         reset_at = EXCLUDED.reset_at`,
+      [key, nextFailures, nextResetIso]
+    );
+  },
+
+  async clearAccountLockout(rawKey) {
+    const key = String(rawKey || '').trim().toLowerCase().slice(0, 300);
+    if (!key) return;
+    await getDb().execute(`DELETE FROM account_lockouts WHERE lock_key = ?`, [key]);
   },
 };
