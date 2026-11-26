@@ -194,32 +194,69 @@ class SqliteAdapter {
 }
 
 class PostgresAdapter {
-  constructor(connectionString) {
+  constructor(connectionString, unpooledConnectionString = '') {
     this.dialect = 'postgres';
     this.connectionString = connectionString;
+    this.unpooledConnectionString = unpooledConnectionString;
     this.pool = null;
   }
 
   async init() {
     const pgMod = await import('pg');
     const Pool = pgMod.default?.Pool || pgMod.Pool;
+    const Client = pgMod.default?.Client || pgMod.Client;
     const isLocalhost = /localhost|127\.0\.0\.1/i.test(this.connectionString);
     const disableSsl = process.env.DATABASE_SSL === 'false' || isLocalhost;
     const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
-
+    const sslConfig = disableSsl ? false : { rejectUnauthorized };
     const isServerless = Boolean(process.env.VERCEL);
+
     this.pool = new Pool({
       connectionString: this.connectionString,
-      ssl: disableSsl ? false : { rejectUnauthorized },
+      ssl: sslConfig,
       max: isServerless ? 3 : 10,
       idleTimeoutMillis: isServerless ? 10000 : 30000,
       connectionTimeoutMillis: 10000,
     });
 
-    for (const stmt of SCHEMA_STATEMENTS) {
-      await this.pool.query(stmt);
+    // Vercel Fluid compute best practice: attach pool so idle connections release cleanly before suspend
+    if (isServerless) {
+      try {
+        const vercelFn = await import('@vercel/functions');
+        if (typeof vercelFn.attachDatabasePool === 'function') {
+          vercelFn.attachDatabasePool(this.pool);
+        }
+      } catch {
+        // Optional when running outside Vercel Fluid compute
+      }
     }
-    await this.pool.query('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS last_seen_at TEXT');
+
+    // Neon best practice: run schema DDL over the direct (unpooled) connection when provided
+    const useDirectForSchema =
+      Boolean(this.unpooledConnectionString) &&
+      this.unpooledConnectionString !== this.connectionString;
+
+    if (useDirectForSchema) {
+      const ddlClient = new Client({
+        connectionString: this.unpooledConnectionString,
+        ssl: sslConfig,
+        connectionTimeoutMillis: 10000,
+      });
+      await ddlClient.connect();
+      try {
+        for (const stmt of SCHEMA_STATEMENTS) {
+          await ddlClient.query(stmt);
+        }
+        await ddlClient.query('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS last_seen_at TEXT');
+      } finally {
+        await ddlClient.end();
+      }
+    } else {
+      for (const stmt of SCHEMA_STATEMENTS) {
+        await this.pool.query(stmt);
+      }
+      await this.pool.query('ALTER TABLE teachers ADD COLUMN IF NOT EXISTS last_seen_at TEXT');
+    }
   }
 
   async query(sql, params = []) {
@@ -293,7 +330,8 @@ export async function initDatabase() {
     }
     let adapter;
     if (databaseUrl) {
-      adapter = new PostgresAdapter(databaseUrl);
+      const unpooledUrl = (process.env.DATABASE_URL_UNPOOLED || '').trim();
+      adapter = new PostgresAdapter(databaseUrl, unpooledUrl);
     } else {
       const sqlitePath = (process.env.SQLITE_PATH || '').trim() || DEFAULT_SQLITE_PATH;
       adapter = new SqliteAdapter(sqlitePath);
