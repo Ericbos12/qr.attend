@@ -27,6 +27,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
   const [error, setError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [latestId, setLatestId] = useState('');
+  const [realtimeMode, setRealtimeMode] = useState(null);
 
   // Teacher override for a student physically in class without a working phone
   const [showManualAdd, setShowManualAdd] = useState(false);
@@ -36,6 +37,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
   const lastTokenRef = useRef('');
   const refreshingRef = useRef(false);
   const serverOffsetRef = useRef(0);
+  const seenRecordIdsRef = useRef(new Set());
 
   useEffect(() => {
     let active = true;
@@ -45,7 +47,9 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
         if (!active) return;
         setSession(sessData.session);
         setRecords(sessData.records);
+        seenRecordIdsRef.current = new Set(sessData.records.map((r) => r.id));
         setQrState(sessData.qr);
+        setRealtimeMode(sessData.realtimeMode === 'poll' ? 'poll' : 'sse');
         if (sessData.lanOrigin) setLanOrigin(sessData.lanOrigin);
         if (sessData.qr?.serverTime) {
           serverOffsetRef.current = sessData.qr.serverTime - Date.now();
@@ -62,12 +66,40 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
     };
   }, [sessionId]);
 
-  // Real-time SSE listener
+  // Real-time listener: SSE on persistent servers, clean 3s polling on serverless (Vercel)
   useEffect(() => {
+    if (!realtimeMode || session?.status === 'ended') return;
+
+    if (realtimeMode === 'poll') {
+      let active = true;
+      const poll = async () => {
+        if (!active || document.visibilityState === 'hidden') return;
+        try {
+          const data = await api.getSession(sessionId);
+          if (!active) return;
+          setSession(data.session);
+          const newlyAdded = data.records.find((r) => !seenRecordIdsRef.current.has(r.id));
+          seenRecordIdsRef.current = new Set(data.records.map((r) => r.id));
+          if (newlyAdded) setLatestId(newlyAdded.id);
+          setRecords(data.records);
+        } catch {}
+      };
+      const timer = setInterval(poll, 3000);
+      return () => {
+        active = false;
+        clearInterval(timer);
+      };
+    }
+
     const es = new EventSource(api.getStreamUrl(sessionId));
+    es.addEventListener('use_polling', () => {
+      es.close();
+      setRealtimeMode('poll');
+    });
     es.addEventListener('checkin', (evt) => {
       try {
         const record = JSON.parse(evt.data);
+        seenRecordIdsRef.current.add(record.id);
         setRecords((prev) => {
           if (prev.some((r) => r.id === record.id)) return prev;
           setLatestId(record.id);
@@ -84,6 +116,7 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
     es.addEventListener('record_removed', (evt) => {
       try {
         const { recordId } = JSON.parse(evt.data);
+        seenRecordIdsRef.current.delete(recordId);
         setRecords((prev) => prev.filter((r) => r.id !== recordId));
       } catch {}
     });
@@ -93,8 +126,13 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
         setSession(updated);
       } catch {}
     });
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) {
+        setRealtimeMode('poll');
+      }
+    };
     return () => es.close();
-  }, [sessionId]);
+  }, [sessionId, realtimeMode, session?.status]);
 
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -192,7 +230,12 @@ export default function ProjectorView({ sessionId, onBack, onOpenDetail }) {
     e.preventDefault();
     setManualMsg('');
     try {
-      await api.manualCheckIn(sessionId, manualForm);
+      const { record } = await api.manualCheckIn(sessionId, manualForm);
+      if (record) {
+        seenRecordIdsRef.current.add(record.id);
+        setRecords((prev) => (prev.some((r) => r.id === record.id) ? prev : [record, ...prev]));
+        setLatestId(record.id);
+      }
       setManualForm({ studentId: '', studentName: '' });
       setManualMsg('Student recorded.');
       toast('Student added manually', 'success');

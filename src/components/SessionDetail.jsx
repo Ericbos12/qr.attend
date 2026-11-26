@@ -20,6 +20,7 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [realtimeMode, setRealtimeMode] = useState(null);
 
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ studentId: '', studentName: '', status: 'present', note: '' });
@@ -30,6 +31,7 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
       const data = await api.getSession(sessionId);
       setSession(data.session);
       setRecords(data.records);
+      setRealtimeMode(data.realtimeMode === 'poll' ? 'poll' : 'sse');
       onSessionLoaded?.(data.session);
     } catch (err) {
       setError(err.message);
@@ -42,10 +44,33 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
     load();
   }, [sessionId]);
 
-  // Live SSE updates when viewing an open/paused register
+  // Live updates when viewing an open/paused register (SSE locally, 3s polling on serverless)
   useEffect(() => {
-    if (!session || session.status === 'ended') return;
+    if (!session || session.status === 'ended' || !realtimeMode) return;
+
+    if (realtimeMode === 'poll') {
+      let active = true;
+      const poll = async () => {
+        if (!active || document.visibilityState === 'hidden') return;
+        try {
+          const data = await api.getSession(sessionId);
+          if (!active) return;
+          setSession(data.session);
+          setRecords(data.records);
+        } catch {}
+      };
+      const timer = setInterval(poll, 3000);
+      return () => {
+        active = false;
+        clearInterval(timer);
+      };
+    }
+
     const es = new EventSource(api.getStreamUrl(sessionId));
+    es.addEventListener('use_polling', () => {
+      es.close();
+      setRealtimeMode('poll');
+    });
     es.addEventListener('checkin', (evt) => {
       try {
         const rec = JSON.parse(evt.data);
@@ -69,8 +94,13 @@ export default function SessionDetail({ sessionId, onBack, onOpenProjector, onSe
         setSession(JSON.parse(evt.data));
       } catch {}
     });
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) {
+        setRealtimeMode('poll');
+      }
+    };
     return () => es.close();
-  }, [sessionId, session?.status]);
+  }, [sessionId, session?.status, realtimeMode]);
 
   async function handleManualAdd(e) {
     e.preventDefault();

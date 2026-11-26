@@ -23,8 +23,9 @@ See `.env.example`:
 - `SQLITE_PATH` — Optional SQLite file path if deploying with a persistent volume instead of PostgreSQL.
 - `DATABASE_SSL` — Optional; defaults to SSL enabled for remote PostgreSQL (`false` disables SSL).
 
-### Build & Start Commands (GitHub Auto-Deploy on Railway / Koyeb / Fly.io)
-- **Build Command**: `npm ci --include=dev && npm run build`
-- **Start Command**: `npm start`
+### Build & Start Commands (GitHub Auto-Deploy on Vercel + Neon)
+- **Hosting Config**: `vercel.json` + `api/index.js` (serves Vite static bundle from `dist/` and routes `/api/*` to the Express serverless function)
+- **Database**: PostgreSQL via `DATABASE_URL` (Neon free tier recommended)
+- **Build Command**: `npm run build`
 - **Health Check Path**: `/api/health`
-- **Node.js Version**: `>= 22.5.0`
+- **Local Development**: `npm run dev:server` + `npm run dev:client` (Node.js `>= 22.5.0`)

@@ -20,9 +20,6 @@ import {
   parseCookies,
   signCookieValue,
   verifyCookieValue,
-  createClaimTicket,
-  verifyClaimTicket,
-  burnClaimTicket,
 } from './auth.js';
 import { getClientIp, getLocalLanIp, haversineDistanceMeters } from './network.js';
 import {
@@ -34,7 +31,9 @@ import {
 } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_VERCEL = Boolean(process.env.VERCEL);
+const IS_PRODUCTION =
+  process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
 const PORT = Number(process.env.PORT) || 3001;
 const DEVICE_COOKIE_NAME = 'attendqr_dev';
 const OAUTH_STATE_COOKIE_NAME = 'attendqr_oauth_state';
@@ -54,10 +53,6 @@ const OWNER_GATE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const OWNER_OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const OWNER_OTP_MAX_ATTEMPTS = 5;
 const OWNER_OTP_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
-
-let pendingOwnerOtp = null; // { codeHash, expiresAt, attempts }
-let ownerOtpLockedUntil = 0;
-const ownerGateSessions = new Map(); // nonce -> { teacherId, pwv, expiresAt }
 
 function hashOwnerOtp(code) {
   return crypto.createHash('sha256').update(`owner-otp:${String(code)}`).digest('hex');
@@ -174,6 +169,30 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '100kb', strict: true }));
+
+// Lazy-initialize the database on first request (required for serverless cold starts on Vercel)
+let storeReadyPromise = null;
+function ensureStoreReady() {
+  if (!storeReadyPromise) {
+    storeReadyPromise = initStore().catch((err) => {
+      storeReadyPromise = null;
+      throw err;
+    });
+  }
+  return storeReadyPromise;
+}
+
+app.use('/api', async (_req, res, next) => {
+  try {
+    await ensureStoreReady();
+    next();
+  } catch (err) {
+    console.error('[DB INIT ERROR]', IS_PRODUCTION ? err?.message : err);
+    res.status(503).json({
+      error: 'Database service is currently unavailable. Please try again shortly.',
+    });
+  }
+});
 
 // Prototype-pollution & HTTP Parameter Pollution (HPP) guard + JSON Content-Type enforcement
 function stripDangerousKeys(obj) {
@@ -514,8 +533,8 @@ const requireStealthOwner = asyncHandler(async (req, res, next) => {
   next();
 });
 
-// Second-factor HttpOnly cookie gate bound to teacherId + password version + revocable server nonce
-function requireOwnerGate(req, res, next) {
+// Second-factor HttpOnly cookie gate bound to teacherId + password version + revocable DB nonce
+const requireOwnerGate = asyncHandler(async (req, res, next) => {
   setOwnerSecurityHeaders(res);
   const cookies = parseCookies(req);
   const rawSigned = cookies[OWNER_GATE_COOKIE_NAME];
@@ -536,7 +555,7 @@ function requireOwnerGate(req, res, next) {
       requiresOwnerVerification: true,
     });
   }
-  const session = data?.nonce ? ownerGateSessions.get(data.nonce) : null;
+  const session = data?.nonce ? await store.getOwnerGateSession(data.nonce) : null;
   const now = Date.now();
   if (
     !session ||
@@ -545,7 +564,7 @@ function requireOwnerGate(req, res, next) {
     !safeEqualStrings(session.pwv, req.teacherPwv) ||
     !safeEqualStrings(data.teacherId || '', req.teacher.id)
   ) {
-    if (data?.nonce) ownerGateSessions.delete(data.nonce);
+    if (data?.nonce) await store.deleteOwnerGateSession(data.nonce);
     clearOwnerGateCookie(req, res);
     return res.status(403).json({
       error: 'Owner verification session expired. Please verify again.',
@@ -554,7 +573,7 @@ function requireOwnerGate(req, res, next) {
   }
   req.ownerGateNonce = data.nonce;
   next();
-}
+});
 
 function sanitizeTeacher(teacher) {
   const safe = {
@@ -602,11 +621,12 @@ function getOrAssignDeviceCookie(req, res) {
   return freshId;
 }
 
-// Health check (for cloud hosting platforms such as Railway / Koyeb / Fly.io)
+// Health check (for cloud hosting platforms such as Vercel / Railway / Koyeb / Fly.io)
 app.get('/api/health', (_req, res) => {
   const payload = {
     ok: true,
     time: new Date().toISOString(),
+    realtimeMode: IS_VERCEL ? 'poll' : 'sse',
   };
   if (!IS_PRODUCTION) {
     payload.database = store.getDialect();
@@ -935,19 +955,19 @@ app.post(
   ownerOtpRateLimit,
   asyncHandler(async (_req, res) => {
     const now = Date.now();
-    if (now < ownerOtpLockedUntil) {
-      const waitMin = Math.max(1, Math.ceil((ownerOtpLockedUntil - now) / 60000));
+    const otpState = await store.getOwnerOtpState();
+    if (otpState?.lockedUntil && now < otpState.lockedUntil) {
+      const waitMin = Math.max(1, Math.ceil((otpState.lockedUntil - now) / 60000));
       return res.status(429).json({
         error: `Owner verification is temporarily locked. Try again in ${waitMin} minute(s).`,
       });
     }
 
     const code = String(crypto.randomInt(100000, 1000000));
-    pendingOwnerOtp = {
+    await store.setOwnerOtp({
       codeHash: hashOwnerOtp(code),
-      expiresAt: now + OWNER_OTP_TTL_MS,
-      attempts: 0,
-    };
+      expiresAtMs: now + OWNER_OTP_TTL_MS,
+    });
 
     try {
       const result = await sendOwnerSecurityCodeEmail({
@@ -956,13 +976,13 @@ app.post(
         expiresInMinutes: 5,
       });
       if (!result.delivered) {
-        pendingOwnerOtp = null;
+        await store.clearOwnerOtp();
         return res.status(503).json({
           error: 'Email delivery is not configured on the server. Owner 2FA requires working email delivery.',
         });
       }
     } catch (err) {
-      pendingOwnerOtp = null;
+      await store.clearOwnerOtp();
       console.error('[OWNER 2FA MAIL ERROR]', IS_PRODUCTION ? err?.message : err);
       return res.status(502).json({
         error: 'Could not send security code right now. Please try again shortly.',
@@ -982,8 +1002,9 @@ app.post(
   ownerOtpRateLimit,
   asyncHandler(async (req, res) => {
     const now = Date.now();
-    if (now < ownerOtpLockedUntil) {
-      const waitMin = Math.max(1, Math.ceil((ownerOtpLockedUntil - now) / 60000));
+    const otpState = await store.getOwnerOtpState();
+    if (otpState?.lockedUntil && now < otpState.lockedUntil) {
+      const waitMin = Math.max(1, Math.ceil((otpState.lockedUntil - now) / 60000));
       return res.status(429).json({
         error: `Owner verification is temporarily locked. Try again in ${waitMin} minute(s).`,
       });
@@ -994,39 +1015,37 @@ app.post(
       return res.status(400).json({ error: 'Enter the 6-digit verification code sent to your email.' });
     }
 
-    if (!pendingOwnerOtp || now > pendingOwnerOtp.expiresAt) {
-      pendingOwnerOtp = null;
+    if (!otpState || !otpState.codeHash || !otpState.expiresAt || now > otpState.expiresAt) {
+      await store.clearOwnerOtp();
       return res.status(400).json({ error: 'Verification code expired. Please request a new code.' });
     }
 
     const candidateHash = hashOwnerOtp(cleanCode);
-    if (!safeEqualStrings(candidateHash, pendingOwnerOtp.codeHash)) {
-      pendingOwnerOtp.attempts += 1;
-      if (pendingOwnerOtp.attempts >= OWNER_OTP_MAX_ATTEMPTS) {
-        pendingOwnerOtp = null;
-        ownerOtpLockedUntil = now + OWNER_OTP_LOCKOUT_MS;
+    if (!safeEqualStrings(candidateHash, otpState.codeHash)) {
+      const failure = await store.recordOwnerOtpFailure({
+        maxAttempts: OWNER_OTP_MAX_ATTEMPTS,
+        lockoutMs: OWNER_OTP_LOCKOUT_MS,
+      });
+      if (failure.locked) {
         return res.status(429).json({
           error: 'Too many invalid codes. Owner verification is locked for 15 minutes.',
         });
       }
-      const remaining = OWNER_OTP_MAX_ATTEMPTS - pendingOwnerOtp.attempts;
       return res.status(401).json({
-        error: `Invalid verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} left.`,
+        error: `Invalid verification code. ${failure.remaining} attempt${failure.remaining === 1 ? '' : 's'} left.`,
       });
     }
 
-    // Burn single-use code immediately and issue revocable HttpOnly gate session
-    pendingOwnerOtp = null;
-    for (const [k, s] of ownerGateSessions.entries()) {
-      if (now > s.expiresAt) ownerGateSessions.delete(k);
-    }
+    // Burn single-use code immediately and issue revocable DB-backed HttpOnly gate session
+    await store.clearOwnerOtp({ keepLock: false });
 
     const nonce = crypto.randomBytes(24).toString('hex');
     const expiresAt = now + OWNER_GATE_TTL_MS;
-    ownerGateSessions.set(nonce, {
+    await store.createOwnerGateSession({
+      nonce,
       teacherId: req.teacher.id,
       pwv: req.teacherPwv,
-      expiresAt,
+      expiresAtMs: expiresAt,
     });
 
     const payloadB64 = Buffer.from(
@@ -1048,18 +1067,18 @@ app.post(
 app.post(
   '/api/owner/lock',
   requireStealthOwner,
-  (req, res) => {
+  asyncHandler(async (req, res) => {
     const cookies = parseCookies(req);
     const verified = verifyCookieValue(cookies[OWNER_GATE_COOKIE_NAME]);
     if (verified) {
       try {
         const data = JSON.parse(Buffer.from(verified, 'base64url').toString('utf8'));
-        if (data?.nonce) ownerGateSessions.delete(data.nonce);
+        if (data?.nonce) await store.deleteOwnerGateSession(data.nonce);
       } catch {}
     }
     clearOwnerGateCookie(req, res);
     res.json({ ok: true });
-  }
+  })
 );
 
 app.get(
@@ -1097,9 +1116,7 @@ app.post(
     }
     await store.updateTeacherPassword(req.teacher.id, newPassword);
     // Revoke any active owner gate sessions on password change
-    for (const [k, s] of ownerGateSessions.entries()) {
-      if (s.teacherId === req.teacher.id) ownerGateSessions.delete(k);
-    }
+    await store.deleteOwnerGateSessionsForTeacher(req.teacher.id);
     const refreshed = await store.findTeacherById(req.teacher.id);
     const token = refreshed ? issueTeacherToken(refreshed) : null;
     res.json({ ok: true, token, message: 'Password updated successfully.' });
@@ -1361,6 +1378,7 @@ app.get(
       records,
       qr,
       lanOrigin,
+      realtimeMode: IS_VERCEL ? 'poll' : 'sse',
     });
   })
 );
@@ -1426,6 +1444,11 @@ app.get(
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders?.();
+
+    if (IS_VERCEL) {
+      res.write(`event: use_polling\ndata: ${JSON.stringify({ sessionId: session.id })}\n\n`);
+      return res.end();
+    }
 
     res.write(`event: connected\ndata: ${JSON.stringify({ sessionId: session.id })}\n\n`);
 
@@ -1728,7 +1751,7 @@ app.post(
       }
     }
 
-    const ticket = createClaimTicket({
+    const ticket = await store.createClaimTicket({
       sessionId: session.id,
       deviceCookieId,
       deviceId: deviceId || '',
@@ -1773,7 +1796,7 @@ app.post(
     const cookies = parseCookies(req);
     const deviceCookieId = verifyCookieValue(cookies[DEVICE_COOKIE_NAME]);
 
-    const ticketCheck = verifyClaimTicket({
+    const ticketCheck = await store.verifyClaimTicket({
       ticketId,
       deviceCookieId,
       deviceId: deviceId || '',
@@ -1837,7 +1860,7 @@ app.post(
     const cls = await store.getClassById(session.classId);
 
     if (result.error === 'ALREADY_CHECKED_IN') {
-      burnClaimTicket(ticketId);
+      await store.burnClaimTicket(ticketId);
       return res.status(200).json({
         alreadyCheckedIn: true,
         message: 'Your attendance was already recorded for this session.',
@@ -1851,14 +1874,14 @@ app.post(
     }
 
     if (result.error === 'DEVICE_ALREADY_USED') {
-      burnClaimTicket(ticketId);
+      await store.burnClaimTicket(ticketId);
       return res.status(409).json({
         error: `This device already submitted attendance for ${result.existing.studentName} (${result.existing.studentId}).`,
         code: 'DEVICE_ALREADY_USED',
       });
     }
 
-    burnClaimTicket(ticketId);
+    await store.burnClaimTicket(ticketId);
 
     const safeRecord = sanitizeRecord(result.record);
     broadcastSessionEvent(session.id, 'checkin', safeRecord);
@@ -1880,10 +1903,10 @@ app.post(
 );
 
 // ==========================================
-// SERVE BUILT FRONTEND
+// SERVE BUILT FRONTEND (non-Vercel standalone mode)
 // ==========================================
 const distDir = path.resolve(__dirname, '../dist');
-if (fs.existsSync(distDir)) {
+if (!IS_VERCEL && fs.existsSync(distDir)) {
   app.use(
     express.static(distDir, {
       dotfiles: 'deny',
@@ -1915,7 +1938,7 @@ app.use((err, _req, res, _next) => {
 });
 
 async function start() {
-  const dbInfo = await initStore();
+  const dbInfo = await ensureStoreReady();
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(
       `AttendQR listening on port ${PORT} (database: ${dbInfo.dialect === 'postgres' ? 'postgresql' : 'sqlite'})`
@@ -1935,7 +1958,16 @@ async function start() {
   process.on('SIGINT', shutdown);
 }
 
-start().catch((err) => {
-  console.error('Failed to start AttendQR server:', err);
-  process.exit(1);
-});
+const isMainModule =
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (!IS_VERCEL && isMainModule) {
+  start().catch((err) => {
+    console.error('Failed to start AttendQR server:', err);
+    process.exit(1);
+  });
+}
+
+export { app, ensureStoreReady };
+export default app;

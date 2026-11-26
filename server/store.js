@@ -211,20 +211,29 @@ async function migrateLegacyJsonIfAvailable(db) {
   }
 }
 
-export async function initStore() {
-  const db = await initDatabase();
-  const countRow = await db.queryOne(`SELECT COUNT(*) AS cnt FROM teachers`);
-  const teacherCount = Number(countRow?.cnt || 0);
+let initStorePromise = null;
 
-  if (
-    teacherCount === 0 &&
-    db.dialect === 'sqlite' &&
-    process.env.NODE_ENV !== 'production' &&
-    !(process.env.SQLITE_PATH || '').trim()
-  ) {
-    await migrateLegacyJsonIfAvailable(db);
-  }
-  return { dialect: db.dialect, dbPath: db.dbPath || null };
+export async function initStore() {
+  if (initStorePromise) return initStorePromise;
+  initStorePromise = (async () => {
+    const db = await initDatabase();
+    const countRow = await db.queryOne(`SELECT COUNT(*) AS cnt FROM teachers`);
+    const teacherCount = Number(countRow?.cnt || 0);
+
+    if (
+      teacherCount === 0 &&
+      db.dialect === 'sqlite' &&
+      process.env.NODE_ENV !== 'production' &&
+      !(process.env.SQLITE_PATH || '').trim()
+    ) {
+      await migrateLegacyJsonIfAvailable(db);
+    }
+    return { dialect: db.dialect, dbPath: db.dbPath || null };
+  })().catch((err) => {
+    initStorePromise = null;
+    throw err;
+  });
+  return initStorePromise;
 }
 
 export const store = {
@@ -1241,5 +1250,229 @@ export const store = {
       users,
       generatedAt: new Date(nowMs).toISOString(),
     };
+  },
+
+  // ==========================================
+  // DB-BACKED QR CLAIM TICKETS (SERVERLESS-SAFE)
+  // ==========================================
+  async createClaimTicket({ sessionId, deviceCookieId, deviceId = '' }) {
+    if (
+      typeof sessionId !== 'string' ||
+      !sessionId ||
+      typeof deviceCookieId !== 'string' ||
+      !deviceCookieId
+    ) {
+      throw new Error('Invalid claim ticket configuration.');
+    }
+
+    const db = getDb();
+    const now = Date.now();
+    const ttlMs = 90 * 1000;
+    const expiresAt = now + ttlMs;
+    const cleanupCutoffIso = new Date(now - 60 * 1000).toISOString();
+
+    await db.execute(`DELETE FROM claim_tickets WHERE expires_at < ?`, [cleanupCutoffIso]);
+
+    const ticketId = `tkt_${crypto.randomBytes(16).toString('base64url')}`;
+    const cleanDeviceId = typeof deviceId === 'string' ? deviceId.slice(0, 80) : '';
+
+    await db.execute(
+      `INSERT INTO claim_tickets (
+         ticket_id, session_id, device_cookie_id, device_id, created_at, expires_at, used_at
+       ) VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+      [
+        ticketId,
+        sessionId,
+        deviceCookieId,
+        cleanDeviceId,
+        new Date(now).toISOString(),
+        new Date(expiresAt).toISOString(),
+      ]
+    );
+
+    return {
+      ticketId,
+      sessionId,
+      deviceCookieId,
+      deviceId: cleanDeviceId,
+      createdAt: now,
+      expiresAt,
+      used: false,
+    };
+  },
+
+  async verifyClaimTicket({ ticketId, deviceCookieId, deviceId = '' }) {
+    if (typeof ticketId !== 'string' || !/^tkt_[A-Za-z0-9_-]{22}$/.test(ticketId)) {
+      return {
+        valid: false,
+        error: 'Missing classroom scan verification. Please scan the live QR code in class.',
+        code: 'NO_TICKET',
+      };
+    }
+
+    const db = getDb();
+    const row = await db.queryOne(`SELECT * FROM claim_tickets WHERE ticket_id = ?`, [ticketId]);
+
+    if (!row) {
+      return {
+        valid: false,
+        error: 'Scan session expired. Please scan the live QR code on the screen again.',
+        code: 'TICKET_EXPIRED',
+      };
+    }
+
+    if (row.used_at) {
+      return {
+        valid: false,
+        error: 'This QR scan has already been used.',
+        code: 'TICKET_USED',
+      };
+    }
+
+    const expiresMs = Date.parse(row.expires_at);
+    if (!Number.isFinite(expiresMs) || Date.now() > expiresMs) {
+      await db.execute(`DELETE FROM claim_tickets WHERE ticket_id = ?`, [ticketId]);
+      return {
+        valid: false,
+        error: 'Check-in window timed out. Please scan the live QR code again.',
+        code: 'TICKET_EXPIRED',
+      };
+    }
+
+    if (typeof deviceCookieId !== 'string' || !deviceCookieId || row.device_cookie_id !== deviceCookieId) {
+      return {
+        valid: false,
+        error: 'Device verification failed. Please scan the live QR code on your own device.',
+        code: 'DEVICE_MISMATCH',
+      };
+    }
+
+    if (row.device_id && (typeof deviceId !== 'string' || row.device_id !== deviceId)) {
+      return {
+        valid: false,
+        error: 'Device verification mismatch. Please scan the live QR code directly on your own phone.',
+        code: 'DEVICE_MISMATCH',
+      };
+    }
+
+    return {
+      valid: true,
+      ticket: {
+        ticketId: row.ticket_id,
+        sessionId: row.session_id,
+        deviceCookieId: row.device_cookie_id,
+        deviceId: row.device_id || '',
+        createdAt: Date.parse(row.created_at),
+        expiresAt: expiresMs,
+        used: false,
+      },
+    };
+  },
+
+  async burnClaimTicket(ticketId) {
+    if (typeof ticketId !== 'string' || !ticketId) return false;
+    const { changes } = await getDb().execute(
+      `UPDATE claim_tickets SET used_at = ? WHERE ticket_id = ? AND used_at IS NULL`,
+      [new Date().toISOString(), ticketId]
+    );
+    return changes > 0;
+  },
+
+  // ==========================================
+  // DB-BACKED OWNER 2FA OTP & GATE SESSIONS
+  // ==========================================
+  async getOwnerOtpState() {
+    const row = await getDb().queryOne(`SELECT * FROM owner_otps WHERE id = ?`, ['singleton']);
+    if (!row) return null;
+    const expiresAt = row.expires_at ? Date.parse(row.expires_at) : 0;
+    const lockedUntil = row.locked_until ? Date.parse(row.locked_until) : 0;
+    return {
+      codeHash: row.code_hash || '',
+      attempts: Number(row.attempts) || 0,
+      expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
+      lockedUntil: Number.isFinite(lockedUntil) ? lockedUntil : 0,
+    };
+  },
+
+  async setOwnerOtp({ codeHash, expiresAtMs }) {
+    const nowIso = new Date().toISOString();
+    const expiresIso = new Date(expiresAtMs).toISOString();
+    await getDb().execute(
+      `INSERT INTO owner_otps (id, code_hash, attempts, expires_at, locked_until, updated_at)
+       VALUES (?, ?, 0, ?, NULL, ?)
+       ON CONFLICT (id) DO UPDATE SET
+         code_hash = EXCLUDED.code_hash,
+         attempts = 0,
+         expires_at = EXCLUDED.expires_at,
+         locked_until = NULL,
+         updated_at = EXCLUDED.updated_at`,
+      ['singleton', codeHash, expiresIso, nowIso]
+    );
+  },
+
+  async clearOwnerOtp({ keepLock = true } = {}) {
+    if (!keepLock) {
+      await getDb().execute(`DELETE FROM owner_otps WHERE id = ?`, ['singleton']);
+      return;
+    }
+    await getDb().execute(
+      `UPDATE owner_otps SET code_hash = '', attempts = 0, expires_at = '', updated_at = ? WHERE id = ?`,
+      [new Date().toISOString(), 'singleton']
+    );
+  },
+
+  async recordOwnerOtpFailure({ maxAttempts = 5, lockoutMs = 15 * 60 * 1000 } = {}) {
+    const state = await this.getOwnerOtpState();
+    const nextAttempts = (state?.attempts || 0) + 1;
+    const now = Date.now();
+    if (nextAttempts >= maxAttempts) {
+      const lockedUntilIso = new Date(now + lockoutMs).toISOString();
+      await getDb().execute(
+        `UPDATE owner_otps
+         SET code_hash = '', attempts = 0, expires_at = '', locked_until = ?, updated_at = ?
+         WHERE id = ?`,
+        [lockedUntilIso, new Date(now).toISOString(), 'singleton']
+      );
+      return { locked: true, remaining: 0 };
+    }
+    await getDb().execute(
+      `UPDATE owner_otps SET attempts = ?, updated_at = ? WHERE id = ?`,
+      [nextAttempts, new Date(now).toISOString(), 'singleton']
+    );
+    return { locked: false, remaining: maxAttempts - nextAttempts };
+  },
+
+  async createOwnerGateSession({ nonce, teacherId, pwv, expiresAtMs }) {
+    const db = getDb();
+    const nowIso = new Date().toISOString();
+    await db.execute(`DELETE FROM owner_gate_sessions WHERE expires_at < ?`, [nowIso]);
+    await db.execute(
+      `INSERT INTO owner_gate_sessions (nonce, teacher_id, pwv, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [nonce, teacherId, pwv, new Date(expiresAtMs).toISOString(), nowIso]
+    );
+  },
+
+  async getOwnerGateSession(nonce) {
+    if (typeof nonce !== 'string' || !nonce) return null;
+    const row = await getDb().queryOne(`SELECT * FROM owner_gate_sessions WHERE nonce = ?`, [nonce]);
+    if (!row) return null;
+    const expiresAt = Date.parse(row.expires_at);
+    return {
+      nonce: row.nonce,
+      teacherId: row.teacher_id,
+      pwv: row.pwv,
+      expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
+    };
+  },
+
+  async deleteOwnerGateSession(nonce) {
+    if (typeof nonce !== 'string' || !nonce) return;
+    await getDb().execute(`DELETE FROM owner_gate_sessions WHERE nonce = ?`, [nonce]);
+  },
+
+  async deleteOwnerGateSessionsForTeacher(teacherId) {
+    if (!teacherId) return;
+    await getDb().execute(`DELETE FROM owner_gate_sessions WHERE teacher_id = ?`, [teacherId]);
   },
 };

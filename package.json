@@ -5,7 +5,7 @@
   "description": "AttendQR — Real-time QR Code Classroom Attendance Marker",
   "type": "module",
   "engines": {
-    "node": ">=22.5.0"
+    "node": "22.x"
   },
   "scripts": {
     "dev:server": "node server/index.js",

@@ -82,12 +82,38 @@ const SCHEMA_STATEMENTS = [
     checked_in_at TEXT NOT NULL,
     UNIQUE(session_id, student_id_normalized)
   )`,
+  `CREATE TABLE IF NOT EXISTS claim_tickets (
+    ticket_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    device_cookie_id TEXT NOT NULL,
+    device_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS owner_otps (
+    id TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL DEFAULT '',
+    locked_until TEXT,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS owner_gate_sessions (
+    nonce TEXT PRIMARY KEY,
+    teacher_id TEXT NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+    pwv TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes(teacher_id)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_teacher_started ON sessions(teacher_id, started_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_class ON sessions(class_id)`,
   `CREATE INDEX IF NOT EXISTS idx_records_session_time ON records(session_id, checked_in_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_records_session_device ON records(session_id, device_cookie_id)`,
   `CREATE INDEX IF NOT EXISTS idx_password_resets_teacher ON password_resets(teacher_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_claim_tickets_expires ON claim_tickets(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_owner_gate_teacher ON owner_gate_sessions(teacher_id)`,
 ];
 
 function convertPlaceholdersToPg(sql) {
@@ -181,11 +207,12 @@ class PostgresAdapter {
     const disableSsl = process.env.DATABASE_SSL === 'false' || isLocalhost;
     const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
 
+    const isServerless = Boolean(process.env.VERCEL);
     this.pool = new Pool({
       connectionString: this.connectionString,
       ssl: disableSsl ? false : { rejectUnauthorized },
-      max: 10,
-      idleTimeoutMillis: 30000,
+      max: isServerless ? 3 : 10,
+      idleTimeoutMillis: isServerless ? 10000 : 30000,
       connectionTimeoutMillis: 10000,
     });
 
@@ -251,18 +278,35 @@ class PostgresAdapter {
 }
 
 let dbInstance = null;
+let initPromise = null;
 
 export async function initDatabase() {
   if (dbInstance) return dbInstance;
-  const databaseUrl = (process.env.DATABASE_URL || '').trim();
-  if (databaseUrl) {
-    dbInstance = new PostgresAdapter(databaseUrl);
-  } else {
-    const sqlitePath = (process.env.SQLITE_PATH || '').trim() || DEFAULT_SQLITE_PATH;
-    dbInstance = new SqliteAdapter(sqlitePath);
-  }
-  await dbInstance.init();
-  return dbInstance;
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    const databaseUrl = (process.env.DATABASE_URL || '').trim();
+    if (!databaseUrl && process.env.VERCEL) {
+      throw new Error(
+        'DATABASE_URL is required when running on Vercel. Connect a Neon PostgreSQL database and set DATABASE_URL in Vercel Environment Variables.'
+      );
+    }
+    let adapter;
+    if (databaseUrl) {
+      adapter = new PostgresAdapter(databaseUrl);
+    } else {
+      const sqlitePath = (process.env.SQLITE_PATH || '').trim() || DEFAULT_SQLITE_PATH;
+      adapter = new SqliteAdapter(sqlitePath);
+    }
+    await adapter.init();
+    dbInstance = adapter;
+    return dbInstance;
+  })().catch((err) => {
+    initPromise = null;
+    throw err;
+  });
+
+  return initPromise;
 }
 
 export function getDb() {
