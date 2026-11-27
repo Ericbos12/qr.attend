@@ -202,7 +202,7 @@ export async function sendPasswordResetEmail({ to, name, code, expiresAt }) {
         Hi ${escapeHtml(safeName)}, use this single-use code to reset your AttendQR password:
       </p>
       <div style="background: #f1f5fb; border: 1px solid #d3dcec; border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 20px;">
-        <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 24px; font-weight: 700; letter-spacing: 0.14em; color: #0f172a;">
+        <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 30px; font-weight: 700; letter-spacing: 0.25em; color: #0f172a;">
           ${escapeHtml(safeCode)}
         </span>
       </div>

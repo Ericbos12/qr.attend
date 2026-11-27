@@ -602,19 +602,30 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
 
                   <div className="form-group auth-fly-2">
                     <label htmlFor="auth-reset-code" className="form-label">
-                      Reset code
+                      6-digit reset code
                     </label>
                     <input
                       id="auth-reset-code"
                       className="input mono auth-concentric-inner"
                       type="text"
-                      autoCapitalize="characters"
-                      autoCorrect="off"
-                      spellCheck={false}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      autoComplete="one-time-code"
+                      maxLength={6}
                       enterKeyHint="next"
-                      placeholder="XXXX-XXXX-XXXX"
+                      placeholder="000000"
                       value={resetCode}
-                      onChange={(e) => setResetCode(e.target.value)}
+                      onChange={(e) => {
+                        const clean = e.target.value.replace(/\D/g, '').slice(0, 6);
+                        if (clean.length > resetCode.length) authSound.keyTick(clean.length * 16);
+                        setResetCode(clean);
+                      }}
+                      style={{
+                        textAlign: 'center',
+                        fontSize: '1.2rem',
+                        fontWeight: 600,
+                        letterSpacing: '0.28em',
+                      }}
                       required
                       autoFocus
                     />

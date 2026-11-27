@@ -951,10 +951,15 @@ app.post(
   asyncHandler(async (req, res) => {
     const { email, code, newPassword } = req.body || {};
     const cleanEmail = sanitizeText(email, 254).toLowerCase();
-    const cleanCode = sanitizeText(code, 32);
+    const cleanCode = sanitizeText(code, 32).replace(/\D/g, '');
     if (!cleanEmail || !cleanCode || typeof newPassword !== 'string') {
       return res.status(400).json({
-        error: 'Email, reset code, and a new password are required.',
+        error: 'Email, 6-digit reset code, and a new password are required.',
+      });
+    }
+    if (cleanCode.length !== 6) {
+      return res.status(400).json({
+        error: 'Enter the 6-digit numeric reset code sent to your email.',
       });
     }
     const pwCheck = validateStrongPassword(newPassword, cleanEmail);

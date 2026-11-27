@@ -3,7 +3,6 @@ import crypto from 'node:crypto';
 import { hashPassword, sanitizeText, sanitizeMultilineText } from './auth.js';
 import { initDatabase, getDb, getLegacyJsonPath } from './db.js';
 
-const RESET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RESET_TTL_MS = 15 * 60 * 1000;
 const SIGNUP_CODE_TTL_MS = 15 * 60 * 1000;
 const SIGNUP_MAX_ATTEMPTS = 5;
@@ -82,17 +81,12 @@ function mapRecord(row) {
 }
 
 function hashResetCode(code) {
-  const normalized = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const normalized = String(code || '').replace(/\D/g, '');
   return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
 function generateResetCode() {
-  const bytes = crypto.randomBytes(12);
-  let raw = '';
-  for (let i = 0; i < 12; i++) {
-    raw += RESET_ALPHABET[bytes[i] % RESET_ALPHABET.length];
-  }
-  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 async function migrateLegacyJsonIfAvailable(db) {
