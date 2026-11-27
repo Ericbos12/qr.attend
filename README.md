@@ -5,7 +5,7 @@ A real-time QR code classroom attendance web application. Instructors create an 
 ## Core Features
 - **Teacher Administrator Accounts**: Register/sign in, change password in-app, and reset forgotten passwords via 15-minute single-use reset codes.
 - **Student ID & Full Name Check-In**: Students scan the live QR code and submit only their Student ID and full name.
-- **Anti-Screenshot Rotating QR Codes**: Tokens rotate every 5–10 seconds with a strict 2.5-second boundary grace window.
+- **Anti-Screenshot Rotating QR Codes**: Tokens rotate every 5–30 seconds with a strict 2.5-second boundary grace window.
 - **Anti-Link-Sharing Tickets**: On scan, the token is immediately exchanged for a single-use, device-bound ticket locked to an `HttpOnly; SameSite=Strict` cookie and wiped from the browser URL bar.
 - **One Submission Per Device**: Blocks checking in twice on the same phone for an absent classmate.
 - **Late Check-In Tracking**: Optional late arrival threshold per session (5–30 minutes after start), automatic `Present` / `Late` tagging, and one-click manual status override.

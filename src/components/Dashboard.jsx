@@ -1140,6 +1140,8 @@ export default function Dashboard({
                   <option value={5}>Every 5 seconds</option>
                   <option value={8}>Every 8 seconds (Recommended)</option>
                   <option value={10}>Every 10 seconds</option>
+                  <option value={20}>Every 20 seconds</option>
+                  <option value={30}>Every 30 seconds</option>
                 </select>
                 <span className="form-hint">
                   Screenshots and forwarded links expire once the code rotates.

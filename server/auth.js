@@ -389,7 +389,7 @@ export function getSessionQrToken(session, nowMs = Date.now()) {
   const rawInterval = Number(session.rotateIntervalSec);
 
   const intervalSec =
-    rawInterval >= 3 && rawInterval <= 15
+    rawInterval >= 3 && rawInterval <= 30
       ? rawInterval
       : 5;
 
@@ -458,7 +458,7 @@ export function validateSessionToken(
   const rawInterval = Number(session.rotateIntervalSec);
 
   const intervalSec =
-    rawInterval >= 3 && rawInterval <= 15
+    rawInterval >= 3 && rawInterval <= 30
       ? rawInterval
       : 5;
 

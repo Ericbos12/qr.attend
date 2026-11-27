@@ -156,7 +156,7 @@ async function migrateLegacyJsonIfAvailable(db) {
             s.title || 'Class Session',
             s.room || '',
             secret,
-            Math.min(15, Math.max(3, Number(s.rotateIntervalSec) || 8)),
+            Math.min(30, Math.max(3, Number(s.rotateIntervalSec) || 8)),
             s.preventDuplicateDevice === false ? 0 : 1,
             s.lateAfterMinutes ?? null,
             s.geoLock?.lat ?? null,
@@ -639,7 +639,7 @@ export const store = {
   }) {
     const db = getDb();
     const cls = await this.getClassById(classId);
-    const safeInterval = Math.min(15, Math.max(3, Number(rotateIntervalSec) || 8));
+    const safeInterval = Math.min(30, Math.max(3, Number(rotateIntervalSec) || 8));
 
     const parsedLate = Number(lateAfterMinutes);
     const safeLateMinutes =
@@ -738,7 +738,7 @@ export const store = {
 
     const rotateIntervalSec =
       updates.rotateIntervalSec !== undefined
-        ? Math.min(15, Math.max(3, Number(updates.rotateIntervalSec) || 8))
+        ? Math.min(30, Math.max(3, Number(updates.rotateIntervalSec) || 8))
         : session.rotateIntervalSec;
 
     const preventDuplicateDevice =
