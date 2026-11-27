@@ -766,23 +766,13 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                     type="submit"
                     disabled={loading}
                   >
-                    {loading ? 'Sending reset code...' : 'Send password reset code'}
+                    {loading ? 'Sending reset code...' : 'Send reset code'}
                     <ArrowRight size={15} strokeWidth={1.75} aria-hidden="true" />
                   </button>
 
                   <div className="auth-inline-links auth-fly-4">
                     <button type="button" className="text-link-btn" onClick={() => switchMode('login')}>
                       <ArrowLeft size={13} strokeWidth={1.75} aria-hidden="true" /> Back to sign in
-                    </button>
-                    <button
-                      type="button"
-                      className="text-link-btn"
-                      onClick={() => {
-                        setResetCode('');
-                        switchMode('verify-reset');
-                      }}
-                    >
-                      Enter reset PIN
                     </button>
                   </div>
                 </form>
