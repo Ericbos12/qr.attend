@@ -7,12 +7,9 @@ import {
   Sparkles,
   Shield,
   ShieldOff,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
 import { api, setAuthToken } from '../api';
 import { evaluatePassword, generateSecurePassword } from '../passwordPolicy';
-import { authSound } from '../sound';
 import LookAwayGuardian from './LookAwayGuardian';
 import PrivacyPolicyModal from './PrivacyPolicyModal';
 
@@ -92,14 +89,12 @@ function OtpPinBoxes({
         next[start + offset] = onlyDigits[offset];
       }
       const nextFocus = Math.min(5, start + onlyDigits.length);
-      authSound.keyTick(Math.min(100, (start + onlyDigits.length) * 16));
       commitDigits(next, nextFocus);
       return;
     }
 
     const next = [...digits];
     next[index] = onlyDigits;
-    authSound.keyTick((index + 1) * 16);
     commitDigits(next, index < 5 ? index + 1 : 5);
   }
 
@@ -137,7 +132,6 @@ function OtpPinBoxes({
       next[start + offset] = pasted[offset];
     }
     const nextFocus = Math.min(5, start + pasted.length);
-    authSound.keyTick(Math.min(100, (start + pasted.length) * 16));
     commitDigits(next, nextFocus);
   }
 
@@ -357,16 +351,6 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [privacyGlass, setPrivacyGlass] = useState(false);
-  const [soundOn, setSoundOn] = useState(() => {
-    try {
-      const saved = localStorage.getItem('attendqr_auth_sound');
-      const initial = saved !== 'off';
-      authSound.enabled = initial;
-      return initial;
-    } catch {
-      return true;
-    }
-  });
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [signupCode, setSignupCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -378,18 +362,8 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
 
-  const wasStrongRef = useRef(false);
-  const wasCommonRef = useRef(false);
-
   const strictMode = mode === 'register' || mode === 'reset';
   const strength = useMemo(() => evaluatePassword(password, email), [password, email]);
-
-  useEffect(() => {
-    authSound.enabled = soundOn;
-    try {
-      localStorage.setItem('attendqr_auth_sound', soundOn ? 'on' : 'off');
-    } catch {}
-  }, [soundOn]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -405,36 +379,15 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     }
   }, [initialError]);
 
-  // Celebrate with subtle chime when password crosses into 100% strong, or soft thud if common
-  useEffect(() => {
-    if (!strictMode) {
-      wasStrongRef.current = false;
-      wasCommonRef.current = false;
-      return;
-    }
-    if (strength.valid && !wasStrongRef.current) {
-      authSound.strongChime();
-    }
-    if (strength.common && !wasCommonRef.current) {
-      authSound.softReject();
-    }
-    wasStrongRef.current = strength.valid;
-    wasCommonRef.current = strength.common;
-  }, [strictMode, strength.valid, strength.common]);
-
   function switchMode(nextMode) {
     setMode(nextMode);
     setError('');
     setInfo('');
     setPasswordFocused(false);
-    authSound.keyTick(30);
   }
 
   function handlePasswordChange(nextVal) {
     setPassword(nextVal);
-    if (nextVal.length > password.length) {
-      authSound.keyTick(strictMode ? evaluatePassword(nextVal, email).percent : 40);
-    }
   }
 
   function handleSuggestPassword() {
@@ -442,19 +395,14 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setPassword(generated);
     setShowPassword(true);
     setError('');
-    authSound.strongChime();
   }
 
   function handleToggleShow() {
-    const next = !showPassword;
-    setShowPassword(next);
-    authSound.glassToggle(next);
+    setShowPassword((prev) => !prev);
   }
 
   function handleToggleGlass() {
-    const next = !privacyGlass;
-    setPrivacyGlass(next);
-    authSound.glassToggle(next);
+    setPrivacyGlass((prev) => !prev);
   }
 
   async function handleAuthSubmit(e) {
@@ -463,13 +411,11 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setInfo('');
 
     if (mode === 'register' && !strength.valid) {
-      authSound.softReject();
       setError(strength.hint || 'Please strengthen your password or tap Suggest.');
       return;
     }
 
     if (mode === 'register' && !consentAccepted) {
-      authSound.softReject();
       setError('Please check the consent box to agree to the Privacy Policy.');
       return;
     }
@@ -478,19 +424,16 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     try {
       if (mode === 'login') {
         const data = await api.login(email, password);
-        authSound.success();
         setAuthToken(data.token);
         onAuthenticated(data.teacher);
       } else {
         const data = await api.register(name, email, password, consentAccepted);
-        authSound.strongChime();
         setSignupCode('');
         setInfo(data.message);
         setResendCooldown(30);
         setMode('verify-signup');
       }
     } catch (err) {
-      authSound.softReject();
       setError(err.message);
     } finally {
       setLoading(false);
@@ -505,11 +448,9 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setLoading(true);
     try {
       const data = await api.verifyRegister(email, clean);
-      authSound.success();
       setAuthToken(data.token);
       onAuthenticated(data.teacher);
     } catch (err) {
-      authSound.softReject();
       setSignupCode('');
       setPinFocusTick((t) => t + 1);
       setError(err.message);
@@ -525,13 +466,11 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setLoading(true);
     try {
       const data = await api.register(name, email, password, true);
-      authSound.keyTick(70);
       setSignupCode('');
       setPinFocusTick((t) => t + 1);
       setInfo(data.message);
       setResendCooldown(30);
     } catch (err) {
-      authSound.softReject();
       setError(err.message);
     } finally {
       setLoading(false);
@@ -545,13 +484,11 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setLoading(true);
     try {
       const data = await api.forgotPassword(email);
-      authSound.keyTick(75);
       setResetCode('');
       setResendCooldown(30);
       setInfo(data.message);
       setMode('verify-reset');
     } catch (err) {
-      authSound.softReject();
       setError(err.message);
     } finally {
       setLoading(false);
@@ -562,7 +499,6 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     const clean = String(codeToVerify ?? resetCode).replace(/\D/g, '').slice(0, 6);
     if (clean.length !== 6 || loading) return;
     if (!email.trim()) {
-      authSound.softReject();
       setResetCode('');
       setError('Please enter your account email address first.');
       return;
@@ -572,13 +508,11 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setLoading(true);
     try {
       const data = await api.verifyResetCode(email, clean);
-      authSound.strongChime();
       setResetCode(clean);
       setPassword('');
       setInfo(data.message || 'Code verified. Set your new password below.');
       setMode('reset');
     } catch (err) {
-      authSound.softReject();
       setResetCode('');
       setPinFocusTick((t) => t + 1);
       setError(err.message);
@@ -594,13 +528,11 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setLoading(true);
     try {
       const data = await api.forgotPassword(email);
-      authSound.keyTick(70);
       setResetCode('');
       setPinFocusTick((t) => t + 1);
       setInfo(data.message);
       setResendCooldown(30);
     } catch (err) {
-      authSound.softReject();
       setError(err.message);
     } finally {
       setLoading(false);
@@ -612,20 +544,17 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setError('');
     setInfo('');
     if (!strength.valid) {
-      authSound.softReject();
       setError(strength.hint || 'Please strengthen your password or tap Suggest.');
       return;
     }
     setLoading(true);
     try {
       const data = await api.resetPassword(email, resetCode, password);
-      authSound.success();
       setResetCode('');
       setPassword('');
       setInfo(data.message);
       setMode('login');
     } catch (err) {
-      authSound.softReject();
       setError(err.message);
     } finally {
       setLoading(false);
@@ -665,27 +594,6 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
         {/* Exact concentric outer bezel: 42px - 8px - 1px = 33px card -> 10px inner */}
         <div className="auth-shell">
           <div className="auth-card">
-            <button
-              type="button"
-              className={`auth-sound-btn ${soundOn ? 'is-on' : 'is-off'}`}
-              onClick={() => {
-                const next = !soundOn;
-                setSoundOn(next);
-                authSound.enabled = next;
-                if (next) authSound.keyTick(85);
-              }}
-              aria-pressed={soundOn}
-              aria-label={soundOn ? 'Turn sound off' : 'Turn sound on'}
-              title={soundOn ? 'Sound is on — click to mute' : 'Sound is off — click to enable'}
-            >
-              {soundOn ? (
-                <Volume2 size={14} strokeWidth={2} aria-hidden="true" />
-              ) : (
-                <VolumeX size={14} strokeWidth={2} aria-hidden="true" />
-              )}
-              <span>{soundOn ? 'Sound on' : 'Sound off'}</span>
-            </button>
-
             <div className="auth-brand-head auth-fly-1">
               <LookAwayGuardian
                 lookAway={guardianLooksAway}
@@ -1054,10 +962,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                         id="auth-consent"
                         type="checkbox"
                         checked={consentAccepted}
-                        onChange={(e) => {
-                          setConsentAccepted(e.target.checked);
-                          authSound.keyTick(e.target.checked ? 90 : 30);
-                        }}
+                        onChange={(e) => setConsentAccepted(e.target.checked)}
                         required
                       />
                       <span>
