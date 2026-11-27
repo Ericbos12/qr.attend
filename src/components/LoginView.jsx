@@ -16,29 +16,6 @@ import { authSound } from '../sound';
 import LookAwayGuardian from './LookAwayGuardian';
 import PrivacyPolicyModal from './PrivacyPolicyModal';
 
-function GoogleIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="#4285F4"
-        d="M23.49 12.27c0-.79-.07-1.55-.2-2.27H12v4.3h6.45a5.52 5.52 0 0 1-2.39 3.62v3.01h3.87c2.26-2.08 3.56-5.15 3.56-8.66z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 24c3.24 0 5.95-1.07 7.93-2.91l-3.87-3.01c-1.07.72-2.45 1.15-4.06 1.15-3.12 0-5.77-2.11-6.72-4.95H1.28v3.1A12 12 0 0 0 12 24z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.28 14.28A7.22 7.22 0 0 1 4.9 12c0-.79.14-1.56.38-2.28v-3.1H1.28a12 12 0 0 0 0 10.76l4-3.1z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 4.77c1.76 0 3.34.61 4.58 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.28 6.62l4 3.1C6.23 6.88 8.88 4.77 12 4.77z"
-      />
-    </svg>
-  );
-}
-
 /**
  * Password field where:
  * - The input's own SVG outline acts as the live concentric strength meter (no red rules)
@@ -231,7 +208,6 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
   const [info, setInfo] = useState('');
   const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
-  const [googleEnabled, setGoogleEnabled] = useState(null);
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
 
@@ -258,21 +234,6 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
       setError(initialError);
     }
   }, [initialError]);
-
-  useEffect(() => {
-    let active = true;
-    api
-      .getAuthProviders()
-      .then((res) => {
-        if (active) setGoogleEnabled(Boolean(res?.google));
-      })
-      .catch(() => {
-        if (active) setGoogleEnabled(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Celebrate with subtle chime when password crosses into 100% strong, or soft thud if common
   useEffect(() => {
@@ -324,20 +285,6 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     const next = !privacyGlass;
     setPrivacyGlass(next);
     authSound.glassToggle(next);
-  }
-
-  function handleGoogleContinue() {
-    setError('');
-    setInfo('');
-    if (googleEnabled === false) {
-      authSound.softReject();
-      setError(
-        'Google Sign-In is currently unavailable. Please sign in with your email and password.'
-      );
-      return;
-    }
-    authSound.keyTick(80);
-    window.location.href = '/api/auth/google';
   }
 
   async function handleAuthSubmit(e) {
@@ -876,18 +823,6 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                   </button>
 
                   <div className="auth-secondary-row auth-fly-4">
-                    <button
-                      type="button"
-                      className="auth-quiet-google"
-                      onClick={handleGoogleContinue}
-                      disabled={loading}
-                    >
-                      <GoogleIcon />
-                      <span>Continue with Google</span>
-                    </button>
-
-                    <span className="auth-dot-sep" aria-hidden="true">·</span>
-
                     {mode === 'login' ? (
                       <button
                         type="button"

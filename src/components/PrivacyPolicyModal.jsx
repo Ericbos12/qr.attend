@@ -53,9 +53,8 @@ export default function PrivacyPolicyModal({ open, onClose }) {
           <h3>1. Only Necessary Data Collected</h3>
           <ul>
             <li>
-              <strong>Instructor accounts:</strong> Full name, email address, and either a one-way salted
-              cryptographic password hash (scrypt) or verified Google account name/email when you choose{' '}
-              <strong>Continue with Google</strong>.
+              <strong>Instructor accounts:</strong> Full name, email address, and a one-way salted
+              cryptographic password hash (scrypt).
             </li>
             <li>
               <strong>Course &amp; attendance records:</strong> Course code, course title, lecture room,
@@ -83,7 +82,7 @@ export default function PrivacyPolicyModal({ open, onClose }) {
           </p>
           <ul>
             <li>
-              <strong>Consent:</strong> Instructor account registration, optional Google Sign-In, and student
+              <strong>Consent:</strong> Instructor account registration and student
               check-in submission.
             </li>
             <li>
@@ -95,8 +94,8 @@ export default function PrivacyPolicyModal({ open, onClose }) {
           <h3>3. Third-Party Services</h3>
           <p>
             AttendQR contains <strong>no advertising trackers, analytics pixels, or third-party social embeds</strong>.
-            External services are limited strictly to Google Sign-In (only when you click Continue with Google),
-            Google Fonts, and transactional email delivery for verification/reset codes and support reports.
+            External services are limited strictly to Google Fonts and transactional email delivery for
+            verification/reset codes and support reports.
           </p>
 
           <h3>4. Your Rights &amp; Data Control</h3>

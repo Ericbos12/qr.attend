@@ -259,19 +259,6 @@ i {
   background: var(--surface-subtle);
 }
 
-.btn-google {
-  background: var(--surface);
-  color: var(--ink);
-  border: 1px solid var(--border-strong);
-  font-weight: 600;
-  gap: 10px;
-  box-shadow: var(--shadow-sm);
-}
-.btn-google:hover:not(:disabled) {
-  background: var(--surface-subtle);
-  border-color: var(--accent);
-}
-
 .auth-divider {
   display: flex;
   align-items: center;
@@ -2466,30 +2453,6 @@ tbody tr:hover td {
   justify-content: center;
   flex-wrap: wrap;
   gap: 10px;
-}
-
-.auth-quiet-google {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  color: var(--ink-secondary);
-  font-family: inherit;
-  font-size: 0.82rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color 0.14s ease;
-}
-
-.auth-quiet-google:hover:not(:disabled) {
-  color: var(--ink);
-}
-
-.auth-dot-sep {
-  color: var(--border-strong);
-  font-size: 0.85rem;
 }
 
 .auth-inline-links {

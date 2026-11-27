@@ -79,7 +79,6 @@ async function request(path, options = {}) {
 
 export const api = {
   // Teacher Administrator Auth & Password Management
-  getAuthProviders: () => request('/api/auth/providers', { public: true }),
   login: (email, password) =>
     request('/api/auth/login', {
       method: 'POST',
