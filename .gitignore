@@ -33,3 +33,5 @@ Thumbs.db
 # Local demo recordings
 *.mp4
 .neon
+
+.vercel

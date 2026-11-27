@@ -8,8 +8,6 @@ import {
   LogOut,
   Menu,
   X,
-  Sun,
-  Moon,
   KeyRound,
   Eye,
   EyeOff,
@@ -50,8 +48,6 @@ function getPageCrumbLabel(path) {
 export default function AppShell({
   path,
   teacher,
-  theme,
-  onToggleTheme,
   onNavigate,
   onLogout,
   liveSessions = [],
@@ -368,17 +364,6 @@ export default function AppShell({
                     className="account-dropdown-item"
                     onClick={() => {
                       setAccountOpen(false);
-                      onToggleTheme();
-                    }}
-                  >
-                    {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-                    <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="account-dropdown-item"
-                    onClick={() => {
-                      setAccountOpen(false);
                       setPwError('');
                       setShowPasswordModal(true);
                     }}
@@ -467,12 +452,23 @@ export default function AppShell({
 
             {pwError && <div className="alert alert-error">{pwError}</div>}
 
-            <form onSubmit={handleChangePassword}>
+            <form onSubmit={handleChangePassword} autoComplete="on">
+              <input
+                type="email"
+                name="username"
+                autoComplete="username"
+                value={teacher?.email || ''}
+                readOnly
+                hidden
+              />
               <div className="form-group">
-                <label className="form-label">Current Password</label>
+                <label htmlFor="change-pw-current" className="form-label">Current Password</label>
                 <div className="password-field">
                   <input
+                    id="change-pw-current"
+                    name="current-password"
                     type={showPw.current ? 'text' : 'password'}
+                    autoComplete="current-password"
                     className="input"
                     value={pwForm.currentPassword}
                     onChange={(e) => setPwForm({ ...pwForm, currentPassword: e.target.value })}
@@ -491,16 +487,19 @@ export default function AppShell({
                 </div>
               </div>
               <div className="form-group">
-                <label className="form-label">New Password</label>
+                <label htmlFor="change-pw-new" className="form-label">New Password</label>
                 <div className="password-field">
                   <input
+                    id="change-pw-new"
+                    name="new-password"
                     type={showPw.next ? 'text' : 'password'}
+                    autoComplete="new-password"
                     className="input"
-                    placeholder="Minimum 6 characters"
+                    placeholder="10+ characters, mixed case & symbol"
                     value={pwForm.newPassword}
                     onChange={(e) => setPwForm({ ...pwForm, newPassword: e.target.value })}
                     required
-                    minLength={6}
+                    minLength={10}
                   />
                   <button
                     type="button"
@@ -514,15 +513,18 @@ export default function AppShell({
                 </div>
               </div>
               <div className="form-group">
-                <label className="form-label">Confirm New Password</label>
+                <label htmlFor="change-pw-confirm" className="form-label">Confirm New Password</label>
                 <div className="password-field">
                   <input
+                    id="change-pw-confirm"
+                    name="confirm-password"
                     type={showPw.confirm ? 'text' : 'password'}
+                    autoComplete="new-password"
                     className="input"
                     value={pwForm.confirmPassword}
                     onChange={(e) => setPwForm({ ...pwForm, confirmPassword: e.target.value })}
                     required
-                    minLength={6}
+                    minLength={10}
                   />
                   <button
                     type="button"

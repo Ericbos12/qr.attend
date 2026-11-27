@@ -9,6 +9,7 @@ import ProjectorView from './components/ProjectorView';
 import SessionDetail from './components/SessionDetail';
 import StudentCheckIn from './components/StudentCheckIn';
 import OwnerDashboard from './components/OwnerDashboard';
+import WelcomeOnboardingModal from './components/WelcomeOnboardingModal';
 
 function getCurrentPath() {
   return window.location.pathname;
@@ -18,7 +19,8 @@ function AppContent() {
   const [path, setPath] = useState(getCurrentPath());
   const [teacher, setTeacher] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [theme, setTheme] = useState(() => localStorage.getItem('attendqr_theme') || 'light');
+  const [authError, setAuthError] = useState('');
+  const [showWelcomeGuide, setShowWelcomeGuide] = useState(false);
 
   const [classes, setClasses] = useState([]);
   const [sessions, setSessions] = useState([]);
@@ -26,12 +28,8 @@ function AppContent() {
   const [detailCrumb, setDetailCrumb] = useState(null);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('attendqr_theme', theme);
-  }, [theme]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+    document.documentElement.dataset.theme = 'light';
+    localStorage.removeItem('attendqr_theme');
   }, []);
 
   const navigate = useCallback((nextPath) => {
@@ -49,6 +47,23 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    let isNewGoogleUser = false;
+    if (window.location.hash && window.location.hash.length > 1) {
+      const hashParams = new URLSearchParams(window.location.hash.slice(1));
+      const googleToken = hashParams.get('google_auth');
+      const googleErr = hashParams.get('auth_error');
+      isNewGoogleUser = hashParams.get('is_new') === '1';
+      if (googleToken || googleErr) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      if (googleToken) {
+        setAuthToken(googleToken);
+      }
+      if (googleErr) {
+        setAuthError(googleErr);
+      }
+    }
+
     const token = getAuthToken();
     if (!token) {
       setCheckingAuth(false);
@@ -57,7 +72,11 @@ function AppContent() {
     api
       .me()
       .then((res) => {
+        setAuthError('');
         setTeacher(res.teacher);
+        if (isNewGoogleUser) {
+          setShowWelcomeGuide(true);
+        }
       })
       .catch(() => {
         setAuthToken('');
@@ -134,8 +153,13 @@ function AppContent() {
   if (!teacher) {
     return (
       <LoginView
-        onAuthenticated={(t) => {
+        initialError={authError}
+        onAuthenticated={(t, opts = {}) => {
+          setAuthError('');
           setTeacher(t);
+          if (opts.isNewAccount) {
+            setShowWelcomeGuide(true);
+          }
           navigate('/');
         }}
       />
@@ -207,8 +231,6 @@ function AppContent() {
     <AppShell
       path={path}
       teacher={teacher}
-      theme={theme}
-      onToggleTheme={toggleTheme}
       onNavigate={navigate}
       onLogout={() => {
         if (teacher?.isOwner) {
@@ -223,6 +245,11 @@ function AppContent() {
       breadcrumb={detailMatch ? detailCrumb : null}
     >
       {pageContent}
+      <WelcomeOnboardingModal
+        open={showWelcomeGuide}
+        teacherName={teacher?.name}
+        onClose={() => setShowWelcomeGuide(false)}
+      />
     </AppShell>
   );
 }
