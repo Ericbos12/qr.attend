@@ -32,7 +32,7 @@ const COMMON_PASSWORDS = new Set([
   'iloveyou', 'sunshine', 'princess', 'football', 'baseball', 'dragon', 'monkey',
   'shadow', 'master', 'abc123', 'abc12345', 'abcd1234', 'test1234', 'testing123',
   'changeme', 'changeme1', 'trustno1', 'starwars', 'superman', 'batman',
-  'eriqo', 'eriqo123', 'attendqr', 'attendqr123', 'attendance', 'attendance1', 'classroom', 'university',
+  'attendqr', 'attendqr123', 'attendance', 'attendance1', 'classroom', 'university',
   'college', 'school123', 'teacher', 'teacher123', 'lecturer', 'student123',
   'professor', 'ghana123', 'accra123', 'kumasi123', 'secret123', 'default123',
 ]);

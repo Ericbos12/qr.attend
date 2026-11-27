@@ -43,10 +43,10 @@ export default function PrivacyPolicyModal({ open, onClose }) {
         </div>
 
         <div className="privacy-content">
-          <p className="privacy-updated">Effective: November 2026 · Service Operator: eriqo</p>
+          <p className="privacy-updated">Effective: November 2026 · Service Operator: AttendQR</p>
 
           <p>
-            eriqo is a classroom attendance register operated to help instructors verify live in-class
+            AttendQR is a classroom attendance register operated to help instructors verify live in-class
             attendance with minimal personal data. We collect only what is strictly necessary to run the service.
           </p>
 
@@ -94,7 +94,7 @@ export default function PrivacyPolicyModal({ open, onClose }) {
 
           <h3>3. Third-Party Services</h3>
           <p>
-            eriqo contains <strong>no advertising trackers, analytics pixels, or third-party social embeds</strong>.
+            AttendQR contains <strong>no advertising trackers, analytics pixels, or third-party social embeds</strong>.
             External services are limited strictly to Google Sign-In (only when you click Continue with Google),
             Google Fonts, and transactional email delivery for verification/reset codes and support reports.
           </p>
@@ -108,7 +108,7 @@ export default function PrivacyPolicyModal({ open, onClose }) {
 
           <h3>5. Service Operator &amp; Contact</h3>
           <p>
-            <strong>Service:</strong> eriqo Classroom Attendance Platform
+            <strong>Service:</strong> AttendQR Classroom Attendance Platform
             <br />
             <strong>Support &amp; Data Protection Contact:</strong>{' '}
             <a href="mailto:attend.qrsupport@gmail.com" className="policy-mail-link">

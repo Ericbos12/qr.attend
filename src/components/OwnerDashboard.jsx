@@ -281,7 +281,7 @@ export default function OwnerDashboard({ teacher }) {
               <span className="owner-private-pill">Owner only · 2FA</span>
             </div>
             <p className="owner-subtitle">
-              Real-time instructor activity, live QR sessions, and check-ins across eriqo.
+              Real-time instructor activity, live QR sessions, and check-ins across AttendQR.
               Auto-updates every 15 seconds.
             </p>
           </div>

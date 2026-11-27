@@ -281,7 +281,7 @@ export default function AppShell({
 
       {/* Right Main Workspace Column */}
       <div className="workspace-main">
-        {/* Animated eriqo custom workspace background */}
+        {/* Animated AttendQR custom workspace background */}
         <div className="workspace-bg-stage no-print" aria-hidden="true">
           <div className="workspace-bg-img" />
           <div className="workspace-bg-sheen" />
@@ -305,7 +305,7 @@ export default function AppShell({
               className="mobile-only"
               onClick={() => onNavigate('/')}
               style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-              aria-label="eriqo Home"
+              aria-label="AttendQR Home"
             >
               <BrandLogo size={26} showText={false} />
             </button>
