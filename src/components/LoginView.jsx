@@ -357,7 +357,16 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [privacyGlass, setPrivacyGlass] = useState(false);
-  const [soundOn, setSoundOn] = useState(true);
+  const [soundOn, setSoundOn] = useState(() => {
+    try {
+      const saved = localStorage.getItem('attendqr_auth_sound');
+      const initial = saved !== 'off';
+      authSound.enabled = initial;
+      return initial;
+    } catch {
+      return true;
+    }
+  });
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [signupCode, setSignupCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -377,6 +386,9 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
 
   useEffect(() => {
     authSound.enabled = soundOn;
+    try {
+      localStorage.setItem('attendqr_auth_sound', soundOn ? 'on' : 'off');
+    } catch {}
   }, [soundOn]);
 
   useEffect(() => {
@@ -655,21 +667,23 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
           <div className="auth-card">
             <button
               type="button"
-              className="auth-sound-btn"
+              className={`auth-sound-btn ${soundOn ? 'is-on' : 'is-off'}`}
               onClick={() => {
                 const next = !soundOn;
                 setSoundOn(next);
                 authSound.enabled = next;
                 if (next) authSound.keyTick(85);
               }}
-              aria-label={soundOn ? 'Mute sound effects' : 'Enable sound effects'}
-              title={soundOn ? 'Sound effects on' : 'Sound effects muted'}
+              aria-pressed={soundOn}
+              aria-label={soundOn ? 'Turn sound off' : 'Turn sound on'}
+              title={soundOn ? 'Sound is on — click to mute' : 'Sound is off — click to enable'}
             >
               {soundOn ? (
-                <Volume2 size={15} strokeWidth={1.75} />
+                <Volume2 size={14} strokeWidth={2} aria-hidden="true" />
               ) : (
-                <VolumeX size={15} strokeWidth={1.75} />
+                <VolumeX size={14} strokeWidth={2} aria-hidden="true" />
               )}
+              <span>{soundOn ? 'Sound on' : 'Sound off'}</span>
             </button>
 
             <div className="auth-brand-head auth-fly-1">
@@ -717,7 +731,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                           <span>Verifying PIN &amp; creating account...</span>
                         </>
                       ) : (
-                        <span>Confirms automatically once the last digit is entered</span>
+                        <span></span>
                       )}
                     </div>
                   </div>
