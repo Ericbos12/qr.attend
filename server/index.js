@@ -100,6 +100,18 @@ function parseAllowedRedirectUris() {
     }
   }
 
+  // Trusted Vercel production host fallback (never derived from untrusted request headers)
+  const hasHttpsAllowlist = Array.from(allowlist).some((u) => u.startsWith('https://'));
+  if (IS_VERCEL && !hasHttpsAllowlist) {
+    const vercelProdHost = (process.env.VERCEL_PROJECT_PRODUCTION_URL || '')
+      .trim()
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/+$/, '');
+    if (vercelProdHost && /^[a-z0-9.-]+$/i.test(vercelProdHost)) {
+      allowlist.add(`https://${vercelProdHost}/api/auth/google/callback`);
+    }
+  }
+
   // Local development convenience fallback ONLY when not in production and no explicit allowlist was set
   if (allowlist.size === 0 && !IS_PRODUCTION) {
     allowlist.add(`http://localhost:${PORT}/api/auth/google/callback`);
