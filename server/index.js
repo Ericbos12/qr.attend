@@ -898,34 +898,50 @@ app.post(
   asyncHandler(async (req, res) => {
     const { email } = req.body || {};
     const cleanEmail = sanitizeText(email, 254).toLowerCase();
-    if (!cleanEmail) {
-      return res.status(400).json({ error: 'Please enter your account email address.' });
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid account email address.' });
     }
     const teacher = await store.findTeacherByEmail(cleanEmail);
-    if (teacher) {
-      const { code, expiresAt } = await store.createPasswordResetToken(teacher.id);
-      try {
-        await sendPasswordResetEmail({
-          to: teacher.email,
-          name: teacher.name,
-          code,
-          expiresAt,
-        });
-      } catch (err) {
-        console.error('[PASSWORD RESET MAIL ERROR]', IS_PRODUCTION ? err?.message : err);
-        if (!IS_PRODUCTION) {
-          console.log(`\n[PASSWORD RESET] Account: ${teacher.email} | Code: ${code} | Expires: ${expiresAt}\n`);
-        }
-      }
+    if (!teacher) {
+      return res.status(404).json({
+        error: 'No AttendQR account is associated with that email address.',
+      });
     }
-    // Always return the same response so account existence cannot be enumerated
-    res.json({
-      ok: true,
-      message:
-        isEmailConfigured() || IS_PRODUCTION
-          ? 'If an account matches that email, a 15-minute reset code has been sent to your inbox.'
-          : 'If an account matches that email, a 15-minute reset code has been generated in the development server log.',
-    });
+
+    const { code, expiresAt } = await store.createPasswordResetToken(teacher.id);
+    try {
+      const delivery = await sendPasswordResetEmail({
+        to: teacher.email,
+        name: teacher.name,
+        code,
+        expiresAt,
+      });
+
+      if (!delivery.delivered && IS_PRODUCTION) {
+        return res.status(503).json({
+          error: 'Email delivery service is temporarily unavailable. Please try again shortly.',
+        });
+      }
+
+      res.json({
+        ok: true,
+        message: delivery.delivered
+          ? `A 15-minute reset code has been sent to ${teacher.email}.`
+          : 'A 15-minute reset code has been generated in the development server log.',
+      });
+    } catch (err) {
+      console.error('[PASSWORD RESET MAIL ERROR]', IS_PRODUCTION ? err?.message : err);
+      if (!IS_PRODUCTION) {
+        console.log(`\n[PASSWORD RESET] Account: ${teacher.email} | Code: ${code} | Expires: ${expiresAt}\n`);
+        return res.json({
+          ok: true,
+          message: 'A 15-minute reset code has been generated in the development server log.',
+        });
+      }
+      return res.status(502).json({
+        error: 'Could not send the password reset email right now. Please try again in a moment.',
+      });
+    }
   })
 );
 
