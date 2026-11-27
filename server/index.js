@@ -946,6 +946,38 @@ app.post(
 );
 
 app.post(
+  '/api/auth/verify-reset-code',
+  authRateLimit,
+  asyncHandler(async (req, res) => {
+    const { email, code } = req.body || {};
+    const cleanEmail = sanitizeText(email, 254).toLowerCase();
+    const cleanCode = sanitizeText(code, 32).replace(/\D/g, '');
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Please enter your account email address.' });
+    }
+    if (cleanCode.length !== 6) {
+      return res.status(400).json({
+        error: 'Enter the 6-digit numeric reset code sent to your email.',
+      });
+    }
+    const lockSec = await checkAccountLockout(`reset:${cleanEmail}`);
+    if (lockSec) {
+      res.setHeader('Retry-After', String(lockSec));
+      return res.status(429).json({
+        error: 'Too many failed reset code attempts. Please wait 15 minutes and request a new code.',
+      });
+    }
+    const result = await store.verifyPasswordResetToken(cleanEmail, cleanCode);
+    if (!result.ok) {
+      await recordAccountFailure(`reset:${cleanEmail}`);
+      return res.status(400).json({ error: result.error });
+    }
+    await clearAccountLockout(`reset:${cleanEmail}`);
+    res.json({ ok: true, message: 'Code verified. Set your new password below.' });
+  })
+);
+
+app.post(
   '/api/auth/reset-password',
   authRateLimit,
   asyncHandler(async (req, res) => {

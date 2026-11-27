@@ -17,6 +17,163 @@ import LookAwayGuardian from './LookAwayGuardian';
 import PrivacyPolicyModal from './PrivacyPolicyModal';
 
 /**
+ * 6-box numeric PIN input:
+ * - Each digit has its own individual box
+ * - Automatically advances to the next box on digit entry
+ * - Supports Backspace to previous box, Arrow keys, and full-code paste/autofill
+ * - Automatically triggers onComplete(code) as soon as the 6th digit is entered
+ */
+function OtpPinBoxes({
+  idPrefix = 'otp-pin',
+  value = '',
+  onChange,
+  onComplete,
+  disabled = false,
+  hasError = false,
+  autoFocus = true,
+  focusTrigger = 0,
+}) {
+  const inputRefs = useRef([]);
+  const lastSubmittedRef = useRef('');
+  const digits = Array.from({ length: 6 }, (_, i) => value[i] || '');
+
+  useEffect(() => {
+    if (value.length < 6) {
+      lastSubmittedRef.current = '';
+    }
+  }, [value]);
+
+  useEffect(() => {
+    if (focusTrigger > 0 && !disabled) {
+      requestAnimationFrame(() => {
+        inputRefs.current[0]?.focus();
+      });
+    }
+  }, [focusTrigger, disabled]);
+
+  useEffect(() => {
+    if (autoFocus && !disabled) {
+      requestAnimationFrame(() => {
+        inputRefs.current[0]?.focus();
+      });
+    }
+  }, [autoFocus]);
+
+  function commitDigits(nextArr, focusIndex) {
+    const joined = nextArr.join('').replace(/\D/g, '').slice(0, 6);
+    onChange(joined);
+    if (typeof focusIndex === 'number' && focusIndex >= 0 && focusIndex < 6) {
+      requestAnimationFrame(() => {
+        inputRefs.current[focusIndex]?.focus();
+        inputRefs.current[focusIndex]?.select?.();
+      });
+    }
+    if (joined.length === 6 && !disabled && lastSubmittedRef.current !== joined) {
+      lastSubmittedRef.current = joined;
+      onComplete?.(joined);
+    }
+  }
+
+  function handleChange(index, raw) {
+    if (disabled) return;
+    const onlyDigits = String(raw || '').replace(/\D/g, '');
+    if (!onlyDigits) {
+      const next = [...digits];
+      next[index] = '';
+      commitDigits(next, index);
+      return;
+    }
+
+    // Handle multi-digit paste or OS one-time-code autofill
+    if (onlyDigits.length > 1) {
+      const next = [...digits];
+      const start = onlyDigits.length >= 6 ? 0 : index;
+      for (let offset = 0; offset < onlyDigits.length && start + offset < 6; offset++) {
+        next[start + offset] = onlyDigits[offset];
+      }
+      const nextFocus = Math.min(5, start + onlyDigits.length);
+      authSound.keyTick(Math.min(100, (start + onlyDigits.length) * 16));
+      commitDigits(next, nextFocus);
+      return;
+    }
+
+    const next = [...digits];
+    next[index] = onlyDigits;
+    authSound.keyTick((index + 1) * 16);
+    commitDigits(next, index < 5 ? index + 1 : 5);
+  }
+
+  function handleKeyDown(index, e) {
+    if (disabled) return;
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      const next = [...digits];
+      if (next[index]) {
+        next[index] = '';
+        commitDigits(next, index);
+      } else if (index > 0) {
+        next[index - 1] = '';
+        commitDigits(next, index - 1);
+      }
+      return;
+    }
+    if (e.key === 'ArrowLeft' && index > 0) {
+      e.preventDefault();
+      inputRefs.current[index - 1]?.focus();
+    } else if (e.key === 'ArrowRight' && index < 5) {
+      e.preventDefault();
+      inputRefs.current[index + 1]?.focus();
+    }
+  }
+
+  function handlePaste(index, e) {
+    if (disabled) return;
+    const pasted = (e.clipboardData?.getData('text') || '').replace(/\D/g, '');
+    if (!pasted) return;
+    e.preventDefault();
+    const next = [...digits];
+    const start = pasted.length >= 6 ? 0 : index;
+    for (let offset = 0; offset < pasted.length && start + offset < 6; offset++) {
+      next[start + offset] = pasted[offset];
+    }
+    const nextFocus = Math.min(5, start + pasted.length);
+    authSound.keyTick(Math.min(100, (start + pasted.length) * 16));
+    commitDigits(next, nextFocus);
+  }
+
+  return (
+    <div
+      className={`otp-pin-grid ${hasError ? 'is-error' : ''}`}
+      role="group"
+      aria-label="6-digit verification PIN"
+    >
+      {digits.map((digit, i) => (
+        <input
+          key={i}
+          ref={(el) => {
+            inputRefs.current[i] = el;
+          }}
+          id={`${idPrefix}-${i}`}
+          className={`otp-pin-box mono ${digit ? 'is-filled' : ''}`}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete={i === 0 ? 'one-time-code' : 'off'}
+          maxLength={6}
+          aria-label={`Digit ${i + 1} of 6`}
+          value={digit}
+          disabled={disabled}
+          onChange={(e) => handleChange(i, e.target.value)}
+          onKeyDown={(e) => handleKeyDown(i, e)}
+          onPaste={(e) => handlePaste(i, e)}
+          onFocus={(e) => e.target.select()}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
  * Password field where:
  * - The input's own SVG outline acts as the live concentric strength meter (no red rules)
  * - Characters are rendered in monospace 1ch slots so dots seamlessly morph into letters
@@ -205,6 +362,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
   const [signupCode, setSignupCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resetCode, setResetCode] = useState('');
+  const [pinFocusTick, setPinFocusTick] = useState(0);
   const [info, setInfo] = useState('');
   const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
@@ -327,18 +485,21 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     }
   }
 
-  async function handleVerifySignup(e) {
-    e.preventDefault();
+  async function submitSignupVerification(codeToVerify) {
+    const clean = String(codeToVerify ?? signupCode).replace(/\D/g, '').slice(0, 6);
+    if (clean.length !== 6 || loading) return;
     setError('');
     setInfo('');
     setLoading(true);
     try {
-      const data = await api.verifyRegister(email, signupCode);
+      const data = await api.verifyRegister(email, clean);
       authSound.success();
       setAuthToken(data.token);
       onAuthenticated(data.teacher);
     } catch (err) {
       authSound.softReject();
+      setSignupCode('');
+      setPinFocusTick((t) => t + 1);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -353,6 +514,8 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     try {
       const data = await api.register(name, email, password, true);
       authSound.keyTick(70);
+      setSignupCode('');
+      setPinFocusTick((t) => t + 1);
       setInfo(data.message);
       setResendCooldown(30);
     } catch (err) {
@@ -371,8 +534,59 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     try {
       const data = await api.forgotPassword(email);
       authSound.keyTick(75);
+      setResetCode('');
+      setResendCooldown(30);
       setInfo(data.message);
+      setMode('verify-reset');
+    } catch (err) {
+      authSound.softReject();
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitVerifyResetCode(codeToVerify) {
+    const clean = String(codeToVerify ?? resetCode).replace(/\D/g, '').slice(0, 6);
+    if (clean.length !== 6 || loading) return;
+    if (!email.trim()) {
+      authSound.softReject();
+      setResetCode('');
+      setError('Please enter your account email address first.');
+      return;
+    }
+    setError('');
+    setInfo('');
+    setLoading(true);
+    try {
+      const data = await api.verifyResetCode(email, clean);
+      authSound.strongChime();
+      setResetCode(clean);
+      setPassword('');
+      setInfo(data.message || 'Code verified. Set your new password below.');
       setMode('reset');
+    } catch (err) {
+      authSound.softReject();
+      setResetCode('');
+      setPinFocusTick((t) => t + 1);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResendResetCode() {
+    if (resendCooldown > 0 || loading || !email.trim()) return;
+    setError('');
+    setInfo('');
+    setLoading(true);
+    try {
+      const data = await api.forgotPassword(email);
+      authSound.keyTick(70);
+      setResetCode('');
+      setPinFocusTick((t) => t + 1);
+      setInfo(data.message);
+      setResendCooldown(30);
     } catch (err) {
       authSound.softReject();
       setError(err.message);
@@ -407,10 +621,13 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
   }
 
   const isVerifySignup = mode === 'verify-signup';
+  const isVerifyReset = mode === 'verify-reset';
 
   const title =
     mode === 'forgot'
       ? 'Reset your password'
+      : isVerifyReset
+      ? 'Enter reset PIN'
       : mode === 'reset'
       ? 'Set a new password'
       : isVerifySignup
@@ -478,47 +695,32 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
 
             <div className="auth-mode-body" key={mode}>
               {isVerifySignup ? (
-                <form onSubmit={handleVerifySignup}>
+                <div className="otp-step-wrap">
                   <div className="form-group auth-fly-2">
-                    <label htmlFor="auth-verify-code" className="form-label">
-                      6-digit code sent to {email}
+                    <label htmlFor="signup-pin-0" className="form-label" style={{ textAlign: 'center', display: 'block' }}>
+                      Enter the 6-digit PIN sent to <strong>{email}</strong>
                     </label>
-                    <input
-                      id="auth-verify-code"
-                      className="input mono auth-concentric-inner"
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      enterKeyHint="done"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      placeholder="000000"
+                    <OtpPinBoxes
+                      idPrefix="signup-pin"
                       value={signupCode}
-                      onChange={(e) => {
-                        const clean = e.target.value.replace(/\D/g, '').slice(0, 6);
-                        if (clean.length > signupCode.length) authSound.keyTick(clean.length * 16);
-                        setSignupCode(clean);
-                      }}
-                      style={{
-                        textAlign: 'center',
-                        fontSize: '1.35rem',
-                        fontWeight: 600,
-                        letterSpacing: '0.32em',
-                        padding: '12px 14px',
-                      }}
-                      required
-                      autoFocus
+                      onChange={setSignupCode}
+                      onComplete={submitSignupVerification}
+                      disabled={loading}
+                      hasError={Boolean(error)}
+                      autoFocus={true}
+                      focusTrigger={pinFocusTick}
                     />
+                    <div className="otp-pin-status" role="status" aria-live="polite">
+                      {loading ? (
+                        <>
+                          <span className="otp-spinner" aria-hidden="true" />
+                          <span>Verifying PIN &amp; creating account...</span>
+                        </>
+                      ) : (
+                        <span>Confirms automatically once the last digit is entered</span>
+                      )}
+                    </div>
                   </div>
-
-                  <button
-                    className="btn btn-primary btn-full btn-lg auth-cta auth-concentric-inner auth-fly-3"
-                    type="submit"
-                    disabled={loading || signupCode.length !== 6}
-                  >
-                    {loading ? 'Verifying code...' : 'Verify & create account'}
-                    <ArrowRight size={15} strokeWidth={1.75} aria-hidden="true" />
-                  </button>
 
                   <div className="auth-inline-links auth-fly-4">
                     <button type="button" className="text-link-btn" onClick={() => switchMode('register')}>
@@ -534,7 +736,7 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                       {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
                     </button>
                   </div>
-                </form>
+                </div>
               ) : mode === 'forgot' ? (
                 <form onSubmit={handleRequestReset}>
                   <div className="form-group auth-fly-2">
@@ -572,63 +774,108 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                     <button type="button" className="text-link-btn" onClick={() => switchMode('login')}>
                       <ArrowLeft size={13} strokeWidth={1.75} aria-hidden="true" /> Back to sign in
                     </button>
-                    <button type="button" className="text-link-btn" onClick={() => switchMode('reset')}>
-                      Enter reset code
+                    <button
+                      type="button"
+                      className="text-link-btn"
+                      onClick={() => {
+                        setResetCode('');
+                        switchMode('verify-reset');
+                      }}
+                    >
+                      Enter reset PIN
                     </button>
                   </div>
                 </form>
-              ) : mode === 'reset' ? (
-                <form onSubmit={handleConfirmReset}>
-                  <div className="form-group auth-fly-2">
-                    <label htmlFor="auth-reset-email" className="form-label">
-                      Email address
-                    </label>
-                    <input
-                      id="auth-reset-email"
-                      className="input auth-concentric-inner"
-                      type="email"
-                      inputMode="email"
-                      autoComplete="email"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      enterKeyHint="next"
-                      placeholder="you@university.edu"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                    />
-                  </div>
+              ) : isVerifyReset ? (
+                <div className="otp-step-wrap">
+                  {!email.trim() ? (
+                    <div className="form-group auth-fly-2">
+                      <label htmlFor="auth-verify-reset-email" className="form-label">
+                        Account email address
+                      </label>
+                      <input
+                        id="auth-verify-reset-email"
+                        className="input auth-concentric-inner"
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        enterKeyHint="next"
+                        placeholder="you@university.edu"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        autoFocus
+                      />
+                    </div>
+                  ) : (
+                    <div className="otp-email-pill auth-fly-2">
+                      <span>
+                        PIN sent to <strong>{email}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        className="text-link-btn"
+                        style={{ fontSize: '0.78rem' }}
+                        onClick={() => {
+                          setResetCode('');
+                          switchMode('forgot');
+                        }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  )}
 
                   <div className="form-group auth-fly-2">
-                    <label htmlFor="auth-reset-code" className="form-label">
-                      6-digit reset code
+                    <label htmlFor="reset-pin-0" className="form-label" style={{ textAlign: 'center', display: 'block' }}>
+                      Enter 6-digit reset PIN
                     </label>
-                    <input
-                      id="auth-reset-code"
-                      className="input mono auth-concentric-inner"
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      enterKeyHint="next"
-                      placeholder="000000"
+                    <OtpPinBoxes
+                      idPrefix="reset-pin"
                       value={resetCode}
-                      onChange={(e) => {
-                        const clean = e.target.value.replace(/\D/g, '').slice(0, 6);
-                        if (clean.length > resetCode.length) authSound.keyTick(clean.length * 16);
-                        setResetCode(clean);
-                      }}
-                      style={{
-                        textAlign: 'center',
-                        fontSize: '1.2rem',
-                        fontWeight: 600,
-                        letterSpacing: '0.28em',
-                      }}
-                      required
-                      autoFocus
+                      onChange={setResetCode}
+                      onComplete={submitVerifyResetCode}
+                      disabled={loading}
+                      hasError={Boolean(error)}
+                      autoFocus={Boolean(email.trim())}
+                      focusTrigger={pinFocusTick}
                     />
+                    <div className="otp-pin-status" role="status" aria-live="polite">
+                      {loading ? (
+                        <>
+                          <span className="otp-spinner" aria-hidden="true" />
+                          <span>Confirming PIN...</span>
+                        </>
+                      ) : (
+                        <span>Confirms automatically as soon as you enter the last digit</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="auth-inline-links auth-fly-4">
+                    <button type="button" className="text-link-btn" onClick={() => switchMode('forgot')}>
+                      <ArrowLeft size={13} strokeWidth={1.75} aria-hidden="true" /> Back
+                    </button>
+                    <button
+                      type="button"
+                      className="text-link-btn"
+                      onClick={handleResendResetCode}
+                      disabled={resendCooldown > 0 || loading || !email.trim()}
+                      style={{ opacity: resendCooldown > 0 || !email.trim() ? 0.6 : 1 }}
+                    >
+                      {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend PIN'}
+                    </button>
+                  </div>
+                </div>
+              ) : mode === 'reset' ? (
+                <form onSubmit={handleConfirmReset}>
+                  <div className="otp-email-pill auth-fly-2">
+                    <span>
+                      Verified account: <strong>{email}</strong>
+                    </span>
                   </div>
 
                   <div className="form-group auth-fly-3">
@@ -683,6 +930,16 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                   <div className="auth-inline-links auth-fly-4">
                     <button type="button" className="text-link-btn" onClick={() => switchMode('login')}>
                       <ArrowLeft size={13} strokeWidth={1.75} aria-hidden="true" /> Back to sign in
+                    </button>
+                    <button
+                      type="button"
+                      className="text-link-btn"
+                      onClick={() => {
+                        setResetCode('');
+                        switchMode('forgot');
+                      }}
+                    >
+                      Request new PIN
                     </button>
                   </div>
                 </form>

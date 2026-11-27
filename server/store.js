@@ -437,6 +437,22 @@ export const store = {
     return { code, expiresAt };
   },
 
+  async verifyPasswordResetToken(email, code) {
+    const teacher = await this.findTeacherByEmail(email);
+    if (!teacher) {
+      return { ok: false, error: 'Invalid or expired reset code.' };
+    }
+    const tokenHash = hashResetCode(code);
+    const row = await getDb().queryOne(
+      `SELECT * FROM password_resets WHERE token_hash = ? AND teacher_id = ?`,
+      [tokenHash, teacher.id]
+    );
+    if (!row || row.used_at || Date.now() > Date.parse(row.expires_at)) {
+      return { ok: false, error: 'Invalid or expired reset code.' };
+    }
+    return { ok: true, teacher };
+  },
+
   async consumePasswordResetToken(email, code, newPassword) {
     const teacher = await this.findTeacherByEmail(email);
     if (!teacher) {
