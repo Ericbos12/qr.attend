@@ -635,10 +635,9 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setInfo('');
     setLoading(true);
     try {
-      const data = await api.forgotPassword(email);
+      await api.forgotPassword(email);
       setResetCode('');
       setResendCooldown(30);
-      setInfo(data.message);
       setMode('verify-reset');
     } catch (err) {
       setError(err.message);
@@ -679,10 +678,9 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
     setInfo('');
     setLoading(true);
     try {
-      const data = await api.forgotPassword(email);
+      await api.forgotPassword(email);
       setResetCode('');
       setPinFocusTick((tTick) => tTick + 1);
-      setInfo(data.message);
       setResendCooldown(30);
     } catch (err) {
       setError(err.message);
@@ -1349,16 +1347,12 @@ export default function LoginView({ onAuthenticated, initialError = '' }) {
                       autoFocus={Boolean(email.trim())}
                       focusTrigger={pinFocusTick}
                     />
-                    <div className="otp-pin-status" role="status" aria-live="polite">
-                      {loading ? (
-                        <>
-                          <span className="otp-spinner" aria-hidden="true" />
-                          <span>Confirming code...</span>
-                        </>
-                      ) : (
-                        <span>Confirms automatically when you enter the last digit</span>
-                      )}
-                    </div>
+                    {loading && (
+                      <div className="otp-pin-status" role="status" aria-live="polite">
+                        <span className="otp-spinner" aria-hidden="true" />
+                        <span>Confirming code...</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="auth-inline-links">
